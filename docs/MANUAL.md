@@ -181,28 +181,32 @@ the id is derived from it (`custom-router`). Named entries are saved in
 `sessions.json`/config metadata (never an API key). `/wizard` also records the
 selected endpoint, so it appears under `/p` next time.
 
-## One-liner and mini builds
+## Three tiers and one-liners
 
+    # default: full agent, certificates
     wget -qO- http://10.20.2.226:8899/install.sh | sh
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
-    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --mini
+
+    # lite: 530-630 KB, no CA bundle, no certificate checks
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
+
+    # nano: 58-82 KB C client, Chat Completions only
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --nano
 
 The installer needs one of curl, wget or busybox wget. It verifies SHA-256,
 installs to `~/.local/bin` or `/usr/local/bin`, and for --run tries TMPDIR,
 /dev/shm and other writable filesystems. A noexec filesystem is skipped; if all
 are noexec it tries a Python memfd, then reports the limitation.
 
-`scripts/build-mini.sh` builds a ROM-oriented variant (17 major CA roots
-instead of the full bundle, size profile, UPX). It is 0.55-0.62 MiB on disk,
-not a few kilobytes: TLS, HTTP, JSON, provider protocols and tools have a
-floor. On a router with almost no free ROM, use `--run --mini` (full agent) or
-`--run --lite` (306-369 KB core) so the binary lives in RAM.
+**Full** embeds the 118-CA Mozilla bundle and verifies certificates. **Lite**
+is the same Rust agent with no embedded CA bytes and verification disabled;
+it keeps every tool, session, MCP, Lua, skill, subagent, job and OAuth
+feature. **Nano** is a separate C89 program for Windows 98/ME/NT4/2000/XP and
+x86_64 Linux: TLS 1.3 with one cipher suite, Chat Completions only, no CA
+store, and a prompt-based `SHELL:` loop instead of tool JSON.
 
-The lite core is a separate binary: Chat Completions only, with shell,
-read_file, write_file, edit_file and list_dir. It has no sessions, MCP, Lua,
-OAuth, skills or subagents. Use it when the machine cannot spare another
-megabyte; use the full build when you need the rest.
+Lite and full can also be built for legacy Windows with rust9x; see
+[docs/LEGACY.md](LEGACY.md). Nano is the native legacy path.
 
 ## Broken networks
 

@@ -36,14 +36,13 @@ pub fn fill_bytes(buf: &mut [u8]) -> Result<()> {
     type Boole = i32;
     type NtStatus = i32;
     extern "system" {
-        fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        fn LoadLibraryA(name: *const u8) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
         fn FreeLibrary(module: *mut c_void) -> Boole;
     }
     // BCryptGenRandom(BCRYPT_USE_SYSTEM_PREFERRED_RNG=2)
-    let wide: Vec<u16> = "bcrypt.dll\0".encode_utf16().collect();
     unsafe {
-        let lib = LoadLibraryW(wide.as_ptr());
+        let lib = LoadLibraryA(b"bcrypt.dll\0".as_ptr());
         if !lib.is_null() {
             let sym = GetProcAddress(lib, b"BCryptGenRandom\0".as_ptr());
             if !sym.is_null() {
@@ -57,8 +56,7 @@ pub fn fill_bytes(buf: &mut [u8]) -> Result<()> {
             FreeLibrary(lib);
         }
         // RtlGenRandom from advapi32 (Windows 2000+).
-        let adv: Vec<u16> = "advapi32.dll\0".encode_utf16().collect();
-        let lib = LoadLibraryW(adv.as_ptr());
+        let lib = LoadLibraryA(b"advapi32.dll\0".as_ptr());
         if !lib.is_null() {
             let sym = GetProcAddress(lib, b"SystemFunction036\0".as_ptr());
             if !sym.is_null() {
@@ -72,6 +70,34 @@ pub fn fill_bytes(buf: &mut [u8]) -> Result<()> {
                 FreeLibrary(lib);
             }
         }
+    }
+    #[cfg(target_vendor = "rust9x")]
+    {
+        // Windows 95/98/ME have no system CSPRNG. rust9x builds still need
+        // handshake randomness; mix every available clock/id source and warn
+        // loudly. Windows 2000+ uses RtlGenRandom above instead.
+        use std::sync::Once;
+        static WARN: Once = Once::new();
+        WARN.call_once(|| {
+            eprintln!(
+                "warning: legacy Windows has no CSPRNG; TLS randomness is weak"
+            )
+        });
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let mut s = nanos
+            ^ ((std::process::id() as u64) << 32)
+            ^ (buf.as_ptr() as usize as u64);
+        for b in buf.iter_mut() {
+            s ^= s >> 12;
+            s ^= s << 25;
+            s ^= s >> 27;
+            s = s.wrapping_mul(0x2545F4914F6CDD1D);
+            *b = (s >> 32) as u8;
+        }
+        return Ok(());
     }
     bail!("no OS random source available (BCryptGenRandom and RtlGenRandom both failed)")
 }

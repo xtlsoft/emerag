@@ -16,8 +16,7 @@ set -eu
 BASE="${EMERAG_BASE:-http://10.20.2.226:8899}"
 MODE=install
 DIR=""
-MINI=0
-LITE=0
+BUILD=full
 
 die() {
     echo "emerag installer: $*" >&2
@@ -35,8 +34,10 @@ Usage:
 Options:
   --install       install to a writable bin directory (default)
   --run           download to a temp filesystem and execute immediately
-  --mini          smaller full build (curated CA bundle, UPX packed)
-  --lite          emergency core (Chat only, five tools, ~306-369 KB)
+  --full          full agent, embedded CA bundle (default)
+  --lite          almost full agent, no CA bundle, no certificate checks
+  --nano          tiny C agent, Chat Completions only, no certificate checks
+  --mini          deprecated alias for --lite
   --dir DIR       install directory (default: ~/.local/bin or /usr/local/bin)
   --base URL      download origin (default: http://10.20.2.226:8899)
   -h, --help      this text
@@ -52,8 +53,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --run) MODE=run; shift ;;
         --install) MODE=install; shift ;;
-        --mini) MINI=1; shift ;;
-        --lite) LITE=1; shift ;;
+        --full) BUILD=full; shift ;;
+        --lite) BUILD=lite; shift ;;
+        --nano) BUILD=nano; shift ;;
+        --mini) BUILD=lite; echo "note: --mini is now --lite (no CA bundle, no checks)" >&2; shift ;;
         --dir)
             [ $# -ge 2 ] || die "--dir needs a value"
             DIR="$2"; shift 2 ;;
@@ -79,14 +82,15 @@ case "$(uname -m)" in
     *) die "unsupported architecture: $(uname -m)" ;;
 esac
 
-if [ "$MINI" = "1" ] && [ "$LITE" = "1" ]; then
-    die "choose either --mini or --lite"
+if [ "$BUILD" = "nano" ] && [ "$FILE" != "emerag-linux-x86_64" ]; then
+    die "nano Linux builds are x86_64-only; use --lite on this architecture"
 fi
-if [ "$MINI" = "1" ]; then
-    FILE="emerag-mini-${FILE#emerag-}"
-elif [ "$LITE" = "1" ]; then
-    FILE="emerag-lite-${FILE#emerag-}"
-fi
+
+case "$BUILD" in
+    full) FILE="emerag-full-${FILE#emerag-}" ;;
+    lite) FILE="emerag-lite-${FILE#emerag-}" ;;
+    nano) FILE="emerag-nano-${FILE#emerag-}" ;;
+esac
 
 fetch() {
     url="$1"

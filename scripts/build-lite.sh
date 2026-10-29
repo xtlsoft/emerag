@@ -1,5 +1,6 @@
 #!/bin/sh
-# Build the standalone emergency core (no LLM adapters, no MCP/script/skills).
+# Build the full-feature lite binary: no embedded CA bundle, no certificate
+# verification, size profile, UPX. Everything else is the normal agent.
 #
 # Usage: ./scripts/build-lite.sh [target ...]
 # Default: x86_64 musl, aarch64 musl, armv7 musl.
@@ -15,10 +16,10 @@ TARGETS="${*:-x86_64-unknown-linux-musl aarch64-unknown-linux-musl armv7-unknown
 for t in $TARGETS; do
   echo "==> $t"
   cargo build --manifest-path "$ROOT/Cargo.toml" --profile size --features lite \
-      --bin emerag-lite --target "$t" 2>&1 | tail -2
-  BIN="$ROOT/target/$t/size/emerag-lite"
+      --bin emerag --target "$t" 2>&1 | tail -2
+  BIN="$ROOT/target/$t/size/emerag"
   if [ ! -f "$BIN" ]; then BIN="$BIN.exe"; fi
-  [ -f "$BIN" ] || { echo "    missing $ROOT/target/$t/size/emerag-lite"; continue; }
+  [ -f "$BIN" ] || { echo "    missing $ROOT/target/$t/size/emerag"; continue; }
   OUT="$DIST/emerag-lite-$VERSION-$t"
   case "$t" in *windows*) OUT="$OUT.exe" ;; esac
   cp "$BIN" "$OUT"

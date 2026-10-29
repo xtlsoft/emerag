@@ -23,11 +23,13 @@ If you have network but no patience:
 
     wget -qO- http://10.20.2.226:8899/install.sh | sh
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
-    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --mini
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --nano
 
 --run uses a writable tmpfs and leaves the root filesystem alone. If no
-curl/wget exists, busybox wget is used. --mini is the packed 17-CA build.
+curl/wget exists, busybox wget is used. --lite has no CA bundle and does not
+verify certificates; --nano is the 58-82 KB C client for Chat Completions
+only, including Windows 98/2000/XP.
 
 ## 2. Connect a model (one time)
 

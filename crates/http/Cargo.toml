@@ -8,3 +8,8 @@ description = "emerag component: http"
 [dependencies]
 emerag-util = { workspace = true }
 emerag-tls = { workspace = true }
+
+[features]
+default = []
+# Default TLS options to Insecure (no certificate verification).
+no-verify = []

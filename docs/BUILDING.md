@@ -13,39 +13,51 @@ Release profile: `opt-level = z`, fat LTO, `panic = abort`, symbols stripped,
 single codegen unit. The binary is a few MiB including TLS, the LLM adapters,
 the script engine and an embedded root CA bundle.
 
-## ROM-constrained (mini) builds
+## Three release tiers
 
-    ./scripts/build-mini.sh x86_64-unknown-linux-musl \
-        aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf
+### Full (default)
 
-The mini variant:
+    ./scripts/build-cross.sh release
 
-- enables the `mini` cargo feature, which selects a curated 17-CA trust bundle
-  (`assets/roots-mini.pem`) instead of the full 118-cert Mozilla bundle;
-- builds with the `size` profile (opt-level=z, fat LTO, one codegen unit,
-  panic=abort, strip);
-- runs `upx --best --lzma` when UPX is installed.
+This is the reference build: full 118-CA bundle, certificate verification on,
+every feature. Outputs `dist/emerag-full-*`.
 
-Measured packed sizes: x86_64 0.61 MiB, aarch64 0.54 MiB, armv7 0.54 MiB.
-Unpacked is about 1.7 MiB. Use `--cacert` for a CA outside the curated set.
+Measured: x86_64 1.87 MiB, ARM64 1.57 MiB, Windows x64 1.58 MiB.
 
-A binary with TLS, HTTP, JSON, the provider adapters and the tool loop cannot
-fit in a few kilobytes. When ROM is nearly full, do not install it: the
-installer's `--run --mini` downloads into /dev/shm or another writable tmpfs
-and executes it there, so only RAM is consumed.
-
-## Lite core
+### Lite
 
     ./scripts/build-lite.sh x86_64-unknown-linux-musl \
         aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf
 
-The `emerag-lite` binary is separate from `emerag`: it does not link
-emerag-llm or emerag-agent. It implements one Chat Completions loop and five
-tools directly on the HTTP/TLS/JSON substrate.
+Lite is the same Rust agent with:
 
-Measured packed sizes: x86_64 369 KB, aarch64 333 KB, armv7 337 KB, Windows x64 306 KB. Raw is
-about 0.9 MB. It has no sessions, MCP, Lua, OAuth, skills, subagents or
-approval modes beyond a y/N prompt.
+- the `lite` cargo feature, which builds `emerag-crypto` with `no-roots`
+  (no CA bytes at all) and `emerag-http` with `no-verify`;
+- the `size` profile and UPX.
+
+It still has every tool, session, MCP, Lua, skill, subagent, job and OAuth
+feature. It does **not** verify certificates unless `--cacert` is supplied.
+Measured packed sizes: x86_64 630 KB, ARM64 555 KB, ARMv7 557 KB,
+Windows x64 530 KB, Windows x86 570 KB.
+
+### Nano (C)
+
+    (cd nano && ./build.sh)
+
+Nano is a separate C89 implementation: one TLS 1.3 cipher suite
+(TLS_AES_128_GCM_SHA256), X25519, SHA-256, AES-128-GCM, HTTP/1.1, Chat
+Completions, and a prompt-based `SHELL:` loop. No CA store and no certificate
+verification. Measured: Linux x86_64 static 58 KB, Windows x86 77 KB, Windows
+x64 82 KB.
+
+The VC6 build is `nano/build-vc6.bat`; it produces a 32-bit PE for Windows
+98/ME/NT4/2000/XP. Linux uses musl-static when `musl-gcc` is available.
+
+### Legacy Rust (optional)
+
+`scripts/build-legacy.sh` builds lite and full for rust9x targets
+(`i586-rust9x-windows-msvc`, `i686-rust9x-windows-msvc`). See
+[docs/LEGACY.md](LEGACY.md).
 
 Other size levers (not used for the shipped artifacts): nightly `build-std`
 with `panic_immediate_abort`, `-Z location-detail=none`, and dropping the

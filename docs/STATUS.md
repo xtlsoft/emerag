@@ -38,8 +38,8 @@ nobody has to reverse-engineer a claim from the README.
   get names, and the catalog is shown only through "Configure another
   provider..."; wizard selections are remembered.
 - **Distribution**: POSIX/busybox installer with SHA-256 verification and
-  tmpfs/noexec fallbacks; mini build (17-CA roots, size profile, UPX) around
-  0.55-0.62 MiB; a standalone emerag-lite core at 0.30-0.37 MiB.
+  tmpfs/noexec fallbacks; three tiers: nano C (58-82 KB), lite Rust
+  (530-630 KB, no CA bundle), full Rust (1.6-2.0 MB, 118-CA bundle).
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
 - **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,
@@ -57,17 +57,20 @@ nobody has to reverse-engineer a claim from the README.
 - **Background sessions**: output is deliberately buffered while you are at
   the prompt, and approvals wait until that session is foreground. They are
   tested through the TUI, not with a formal concurrency test.
-- **Mini build**: the curated bundle has 17 major CAs, not the full Mozilla
-  set; use --cacert for a private CA. UPX-packed binaries can be flagged by
-  some scanners, though they execute normally. The installer cannot execute
-  from a noexec filesystem unless /dev/shm, another exec tmpfs, or Python
-  memfd is available.
+- **Lite build**: no CA bundle and no certificate verification. It is the
+  full feature set otherwise, but it is not a security equivalent of full.
+  UPX-packed binaries can be flagged by some scanners. The installer cannot
+  execute from a noexec filesystem unless /dev/shm, another exec tmpfs, or
+  Python memfd is available.
 - **Session files**: concurrent emerag processes writing the same
   sessions.json are not locked; the last writer wins.
-- **Lite core**: separate binary, tested end-to-end with the mock provider on
-  x86_64 and under qemu-aarch64. It speaks Chat Completions only, has five
-  tools, and uses the same curated 17-CA bundle. It is not a drop-in
-  replacement for the full agent.
+- **Nano**: C89/VC6 source. Linux x86_64 musl and Windows x64/x86 PE builds
+  are produced. DeepSeek TLS 1.3 and the mock shell loop were tested; Windows
+  x64 runs under Wine. The VC6 build and Windows 98/2000/XP execution were not
+  available in this environment.
+- **Legacy Rust**: rust9x build script and a legacy RNG fallback are present,
+  but the rust9x toolchain/MSVC linker was not installed, so no lite/full
+  9x/2000 artifact was produced or tested.
 
 - **Windows 7**: scripts/build-legacy-win.sh builds with Rust 1.77.2, the last
   toolchain supporting Windows 7. It was not verifiable in this environment

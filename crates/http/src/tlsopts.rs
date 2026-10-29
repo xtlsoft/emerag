@@ -48,6 +48,9 @@ pub struct TlsOptions {
 impl TlsOptions {
     pub fn new() -> Self {
         TlsOptions {
+            #[cfg(feature = "no-verify")]
+            verify: TlsVerify::Insecure,
+            #[cfg(not(feature = "no-verify"))]
             verify: TlsVerify::EmbeddedCa,
             sni: None,
             alpn: vec!["http/1.1".to_string()],

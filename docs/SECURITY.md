@@ -53,9 +53,12 @@ If you are already root, elevation is a no-op.
 
 ## Network and TLS
 
-- TLS verification is on by default, against a Mozilla-derived root bundle
-  embedded in the binary. A broken system CA store cannot silently weaken you.
-- `--cacert` replaces the trust anchors; `SSL_CERT_FILE` is honoured.
+- The full build verifies TLS against a Mozilla-derived root bundle embedded
+  in the binary. A broken system CA store cannot silently weaken it.
+- The lite build contains no CA bytes and does not verify certificates by
+  default. `--cacert` still enables verification for a specific endpoint.
+- Nano is a C client with no CA store and no certificate verification code.
+  It should not be used across a hostile network.
 - `--insecure` disables verification and prints a warning at startup. It is
   for a captive-portal LLM proxy you control, nothing else.
 - `--resolve host:443:IP` / `--ip` pin the address but still verify the

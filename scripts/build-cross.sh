@@ -40,7 +40,7 @@ for t in $TARGETS; do
     BIN="$ROOT/target/$t/$PROFILE/emerag"
     [ -f "$BIN" ] || BIN="$BIN.exe"
     if [ -f "$BIN" ]; then
-      cp "$BIN" "$DIST/emerag-$VERSION-$t$(printf '%s' "$BIN" | grep -q '\.exe$' && echo .exe || true)"
+      cp "$BIN" "$DIST/emerag-full-$VERSION-$t$(printf '%s' "$BIN" | grep -q '\.exe$' && echo .exe || true)"
       echo "    $(wc -c < "$BIN") bytes"
     fi
   else

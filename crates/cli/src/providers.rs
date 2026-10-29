@@ -104,7 +104,14 @@ pub fn client_config(cfg: &Config, _cli: &Cli) -> Result<ClientConfig, String> {
                 std::fs::read(path).map_err(|e| format!("cannot read --cacert {path}: {e}"))?;
             TlsVerify::CaFile(pem)
         } else {
-            TlsVerify::EmbeddedCa
+            #[cfg(feature = "lite")]
+            {
+                TlsVerify::Insecure
+            }
+            #[cfg(not(feature = "lite"))]
+            {
+                TlsVerify::EmbeddedCa
+            }
         },
         sni: None,
         alpn: vec!["http/1.1".into()],

@@ -476,14 +476,21 @@ pub struct CertStore {
 impl CertStore {
     /// The Mozilla-derived roots embedded in the binary.
     pub fn embedded() -> Result<&'static CertStore> {
-        #[cfg(feature = "tiny-roots")]
-        const ROOTS: &[u8] = include_bytes!("../assets/roots-mini.pem");
-        #[cfg(not(feature = "tiny-roots"))]
-        const ROOTS: &[u8] = include_bytes!("../assets/roots.pem");
-        static EMBEDDED: std::sync::OnceLock<Result<CertStore>> = std::sync::OnceLock::new();
-        match EMBEDDED.get_or_init(|| CertStore::from_pem(ROOTS)) {
-            Ok(store) => Ok(store),
-            Err(e) => Err(e.clone()),
+        #[cfg(feature = "no-roots")]
+        {
+            // Lite build: no CA bytes in the binary. Verification must be
+            // disabled, or a user-supplied --cacert used.
+            static EMPTY: std::sync::OnceLock<CertStore> = std::sync::OnceLock::new();
+            return Ok(EMPTY.get_or_init(|| CertStore { roots: Vec::new() }));
+        }
+        #[cfg(not(feature = "no-roots"))]
+        {
+            const ROOTS: &[u8] = include_bytes!("../assets/roots.pem");
+            static EMBEDDED: std::sync::OnceLock<Result<CertStore>> = std::sync::OnceLock::new();
+            match EMBEDDED.get_or_init(|| CertStore::from_pem(ROOTS)) {
+                Ok(store) => Ok(store),
+                Err(e) => Err(e.clone()),
+            }
         }
     }
 

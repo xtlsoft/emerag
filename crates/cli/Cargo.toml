@@ -9,17 +9,10 @@ description = "emerag - a tiny portable agent for emergencies"
 name = "emerag"
 path = "src/main.rs"
 
-[[bin]]
-name = "emerag-lite"
-path = "src/bin/emerag-lite.rs"
-required-features = ["lite"]
-
 [features]
 default = []
-# Curated trust roots + release-friendly packing target (see build-mini.sh).
-mini = ["emerag-crypto/tiny-roots"]
-# Standalone emergency core; see src/bin/emerag-lite.rs.
-lite = ["emerag-crypto/tiny-roots"]
+# Full-feature lite: no embedded CA bundle and no certificate verification.
+lite = ["emerag-crypto/no-roots", "emerag-http/no-verify"]
 
 [dependencies]
 emerag-util = { workspace = true }

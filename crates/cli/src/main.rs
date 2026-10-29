@@ -39,6 +39,9 @@ fn main() {
         }
         Action::Version => {
             println!("emerag {}", env!("CARGO_PKG_VERSION"));
+            #[cfg(feature = "lite")]
+            println!("lite build: no embedded CAs, TLS verification disabled");
+            #[cfg(not(feature = "lite"))]
             println!("zero-dependency emergency agent");
             println!(
                 "built for {}-{} at {}",
@@ -50,6 +53,12 @@ fn main() {
         }
         _ => {}
     }
+
+    #[cfg(feature = "lite")]
+    eprintln!(
+        "warning: lite build - TLS certificates are NOT verified. \
+         Use --cacert FILE to enable verification, or the full build."
+    );
 
     let (mut cfg, notes) = Config::load(cli.config_path.as_deref());
     apply_cli(&mut cfg, &cli);

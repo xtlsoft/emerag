@@ -7,8 +7,9 @@ description = "emerag component: crypto"
 
 [features]
 default = []
-# Smaller trust bundle (17 major CAs) for ROM-constrained builds.
-tiny-roots = []
+# Do not embed any CA certificate bundle. Used by the lite build, which
+# deliberately disables certificate verification to save space.
+no-roots = []
 
 [dependencies]
 emerag-util = { workspace = true }
