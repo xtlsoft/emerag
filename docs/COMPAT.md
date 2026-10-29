@@ -9,12 +9,12 @@ binary was executed (natively or under qemu-user) and answered `--version`,
 
 | target | size | link | tested | notes |
 | --- | --- | --- | --- | --- |
-| x86_64-unknown-linux-musl | 1.78 MiB | static-pie, 0 DT_NEEDED, 0 GLIBC refs | native | reference build |
-| i686-unknown-linux-musl | 1.61 MiB | static-pie | qemu-i386 | 32-bit x86 |
+| x86_64-unknown-linux-musl | 1.79 MiB | static-pie, 0 DT_NEEDED, 0 GLIBC refs | native | reference build |
+| i686-unknown-linux-musl | 1.62 MiB | static-pie | qemu-i386 | 32-bit x86 |
 | aarch64-unknown-linux-musl | 1.50 MiB | static-pie | qemu-aarch64 | |
-| armv7-unknown-linux-musleabihf | 1.46 MiB | static-pie | qemu-arm | hard-float ABI |
-| riscv64gc-unknown-linux-musl | 1.46 MiB | static-pie | qemu-riscv64 | |
-| s390x-unknown-linux-gnu | 1.78 MiB | dynamic (glibc) | not executed | no upstream musl target |
+| armv7-unknown-linux-musleabihf | 1.47 MiB | static-pie | qemu-arm | hard-float ABI |
+| riscv64gc-unknown-linux-musl | 1.47 MiB | static-pie | qemu-riscv64 | |
+| s390x-unknown-linux-gnu | 1.79 MiB | dynamic (glibc) | not executed | no upstream musl target |
 | loongarch64-unknown-linux-musl | - | static-pie | not built | needs a loongarch linker |
 
 Verification commands:

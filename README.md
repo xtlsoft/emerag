@@ -16,14 +16,14 @@ That is the whole installation.
 
 | property | value (Linux x86_64, release build) |
 | --- | --- |
-| binary size | **1.78 MiB** (1.87 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
+| binary size | **1.79 MiB** (1.88 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
 | resident memory | **3.2 MB** (3.1 MiB) maximum RSS for a full one-shot tool-using session |
 | dependencies | **zero** Rust crates, zero shared libraries |
 | tests | 476 unit/integration tests + 10 end-to-end scenarios |
 | startup | milliseconds; no config file required |
 
-Other targets: aarch64 1.50 MiB, armv7 1.46 MiB, riscv64 1.46 MiB,
-i686 1.61 MiB, Windows x64 1.50 MiB, Windows x86 1.45 MiB, s390x 1.78 MiB. See
+Other targets: aarch64 1.50 MiB, armv7 1.47 MiB, riscv64 1.47 MiB,
+i686 1.62 MiB, Windows x64 1.51 MiB, Windows x86 1.46 MiB, s390x 1.79 MiB. See
 [docs/COMPAT.md](docs/COMPAT.md).
 
 ## Why

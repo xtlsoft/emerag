@@ -103,7 +103,13 @@ pub fn run(cfg: &mut Config, cli: &Cli, ui: &mut TermUi) -> Result<(), String> {
         .map(|p| !matches!(p.auth, emerag_llm::catalog::AuthKind::None))
         .unwrap_or(true);
     if is_account {
-        crate::oauth::login_deepseek(cfg, false)?;
+        if cfg.account_token.is_empty() {
+            crate::oauth::login_deepseek(cfg, false)?;
+        } else {
+            println!();
+            println!("Already signed in with a DeepSeek account; reusing the saved grant.");
+            println!("Use /login deepseek if it needs replacing.");
+        }
     } else if needs_key {
         println!();
         if cfg.api_key.is_empty() {

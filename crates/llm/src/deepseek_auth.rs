@@ -165,9 +165,19 @@ pub fn cancel_login(start: &LoginStart) {
 }
 
 /// Revoke the stored grant. Failures are ignored by callers.
+///
+/// The local grant is already gone by the time this runs, so do not let an
+/// offline network stall sign-out: wait at most five seconds.
 pub fn logout(platform: &str, token: &str) -> Result<(), Error> {
-    let body = Value::Null;
-    let _ = post(platform, "/auth-api/v0/users/logout", &body, Some(token))?;
+    let platform = platform.to_string();
+    let token = token.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let body = Value::Null;
+        let _ = post(&platform, "/auth-api/v0/users/logout", &body, Some(&token));
+        let _ = tx.send(());
+    });
+    let _ = rx.recv_timeout(Duration::from_secs(5));
     Ok(())
 }
 

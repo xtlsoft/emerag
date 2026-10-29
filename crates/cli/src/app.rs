@@ -275,7 +275,15 @@ impl App {
                             self.rebuild_agent()?;
                             println!("signed in; use /model to pick a model");
                         }
-                        Ok(1) => self.ask_api_key()?,
+                        Ok(1) => {
+                            if self.cfg.provider == "deepseek-account" {
+                                self.cfg.provider = "deepseek".into();
+                                self.cfg.base_url = "https://api.deepseek.com".into();
+                                self.cfg.api = "chat".into();
+                                self.cfg.model.clear();
+                            }
+                            self.ask_api_key()?;
+                        }
                         _ => {}
                     }
                 } else {
@@ -429,7 +437,6 @@ impl App {
             let key = key.trim().to_string();
             if !key.is_empty() {
                 self.cfg.api_key = key;
-                self.cfg.provider = "deepseek".into();
                 self.rebuild_agent()?;
                 println!(
                     "key set for this session ({})",
