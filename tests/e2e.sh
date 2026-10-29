@@ -70,6 +70,13 @@ set +e
 set -e
 check "untrusted CA rejected" /tmp/e2e-https-bad.out "no trusted root"
 
+echo "== subagents =="
+start tests/mock_subagent.py 18205
+"$BIN" --base-url http://127.0.0.1:18205/v1 --model mock-model \
+  --mode auto --no-write -p "delegate the scan" > /tmp/e2e-sub.out 2>&1
+check "subagent ran and reported" /tmp/e2e-sub.out "subagent scan finished"
+check "subagent result reached the parent" /tmp/e2e-sub.out "child finished its job"
+
 echo "== json output =="
 "$BIN" --base-url http://127.0.0.1:18201/v1 --api chat --model mock-model \
   --mode auto --no-write --json -p "read tests/data/hello.txt" > /tmp/e2e-json.out 2>&1
