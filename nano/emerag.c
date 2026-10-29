@@ -501,6 +501,7 @@ int main(int argc, char **argv) {
     printf("host %s:%d%s  model %s\n", host, port, path, model);
     if (!key || !*key) printf("warning: no API key (set --key or EMERAG_API_KEY)\n");
     printf("Type /quit to exit. Commands requested by the model are printed before running.\n\n");
+    fflush(stdout);
 
     tls = tls_connect(host, ip, port, err, sizeof(err));
     if (!tls) {
