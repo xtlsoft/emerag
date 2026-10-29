@@ -7,9 +7,15 @@ Type / then a command (prefix works):
   /help /h     help & this card
   /wizard /w   provider + model setup
   /model /m    switch model
+  /p           configured providers
   /auth /k     set API key
-  /mode /p     ask | auto | read-only | yolo
-  /jobs /j     background jobs
+  /mode        ask | auto | read-only | yolo
+  /new [name]  new session
+  /session     list / switch sessions
+  /fork [name] fork this session
+  /bg PROMPT   run in background
+  /wait /kill  wait for / cancel background
+  /jobs /j     background commands
   /skills /s   skills
   /mcp         MCP servers/tools
   /config /c   effective config

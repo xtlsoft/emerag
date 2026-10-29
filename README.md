@@ -16,14 +16,14 @@ That is the whole installation.
 
 | property | value (Linux x86_64, release build) |
 | --- | --- |
-| binary size | **1.79 MiB** (1.88 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
+| binary size | **1.84 MiB** (1.93 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
 | resident memory | **3.2 MB** (3.1 MiB) maximum RSS for a full one-shot tool-using session |
 | dependencies | **zero** Rust crates, zero shared libraries |
-| tests | 476 unit/integration tests + 10 end-to-end scenarios |
+| tests | 479 unit/integration tests + 10 end-to-end scenarios |
 | startup | milliseconds; no config file required |
 
-Other targets: aarch64 1.50 MiB, armv7 1.47 MiB, riscv64 1.47 MiB,
-i686 1.62 MiB, Windows x64 1.51 MiB, Windows x86 1.46 MiB, s390x 1.79 MiB. See
+Other targets: aarch64 1.57 MiB, armv7 1.51 MiB, riscv64 1.50 MiB,
+i686 1.67 MiB, Windows x64 1.56 MiB, Windows x86 1.50 MiB, s390x 1.85 MiB. See
 [docs/COMPAT.md](docs/COMPAT.md).
 
 ## Why
@@ -37,7 +37,7 @@ when you need help most. emerag makes the opposite trade:
 - **Zero third-party crates.** The whole agent is Rust plus std, with
   hand-written TLS, HTTP, JSON, crypto, X.509 and a Lua-subset interpreter.
   Builds work offline and cross-compile to unusual targets.
-- **Small.** 1.5-1.8 MiB on disk; 3.2 MB RSS in normal use; no background
+- **Small.** 1.5-1.9 MiB on disk; 3.2 MB RSS in normal use; no background
   threads when idle; no model weights in the agent process.
 - **Terminal-first.** VT100, serial consoles, 40-column windows, legacy
   Windows consoles, no Unicode, no color, no arrow keys: all supported.
@@ -53,6 +53,19 @@ when you need help most. emerag makes the opposite trade:
   x-dsh-auth-token.
 - **Live, not stuck.** Reasoning traces stream while the model thinks, each
   request shows a waiting status, and tool calls report their duration.
+- **Many conversations.** /new, /session and /fork keep independent histories.
+  A turn started with " &" or /bg keeps running while you switch and work in
+  another session; /wait and /kill control it. Sessions persist as 0600 JSON,
+  or stay in memory with --no-write.
+- **Named providers.** Configured endpoints are remembered under a name;
+  /p lists only those, with a separate "Configure another provider..." entry
+  instead of dumping the whole catalog.
+- **One-liner and RAM-only runs.** A POSIX/busybox installer downloads,
+  verifies and installs, or executes from /dev/shm when the root filesystem is
+  read-only.
+- **Mini build.** The mini feature swaps the full CA bundle for 17 major
+  roots, and scripts/build-mini.sh packs the result with UPX:
+  **0.54-0.64 MiB** on disk for ARM/x86.
 - **Broken-shell aware.** bash, zsh, fish, sh, cmd, PowerShell, Python and PHP
   are supported; when none works, the built-in script engine exposes
   filesystem, process, environment, hash and JSON primitives.
@@ -72,6 +85,25 @@ when you need help most. emerag makes the opposite trade:
 
 The wizard needs only digits and Enter. Nothing needs an editor, a mouse or a
 clipboard. If DNS is broken it offers to pin an IP address.
+
+### Install or run without installing
+
+    # install (curl, wget or busybox wget)
+    wget -qO- http://10.20.2.226:8899/install.sh | sh
+
+    # temporary run; uses tmpfs/RAM and works with a read-only root
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
+
+    # smaller packed build
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --mini
+
+The installer tries curl, wget and busybox wget, verifies SHA-256 when a
+checksum tool exists, and falls back from a noexec TMPDIR to /dev/shm.
+Options must come before --run; arguments after it go to emerag.
+
+A binary cannot fit in a few kilobytes with TLS, HTTP, JSON, the provider
+protocols and the tool loop. If ROM is nearly full, use --run --mini: the
+download lives in RAM and nothing is installed.
 
 For scripts and automation:
 

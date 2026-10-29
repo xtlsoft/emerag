@@ -9,7 +9,6 @@ dependencies = [
  "emerag-agent",
  "emerag-crypto",
  "emerag-http",
- "emerag-infer",
  "emerag-json",
  "emerag-llm",
  "emerag-mcp",

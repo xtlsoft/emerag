@@ -322,6 +322,19 @@ some models are region/privacy gated so a 403 can be policy rather than auth; `c
   `.gguf` and must be JSON-escaped, not URL-quoted into the path; there is no auth failure to detect, so
   "is it up" is a 2s TCP connect test.
 
+### 6.1 Named providers and /p
+
+Custom endpoints can have a display name. The wizard asks for one when the
+"Custom" catalog entry is selected, derives an id such as `custom-router`, and
+stores metadata (name, base_url, api, model) in the `custom_profiles` config
+array. No API key is stored there; keys remain in the normal secret fields.
+
+`/provider` (or `/p`) lists only the active endpoint and saved entries, plus a
+final "Configure another provider..." choice. That choice opens the embedded
+catalog; configuring one remembers it too. The catalog is therefore not dumped
+on every switch. `providers::client_config` can resolve a saved custom id even
+when `base_url` is not repeated on the command line.
+
 ## 7. Embedded provider catalog — data model
 
 Static data compiled in as a const table: `&'static str` throughout, slices for model defaults and

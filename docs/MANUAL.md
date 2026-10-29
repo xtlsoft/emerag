@@ -140,12 +140,63 @@ Type `/help` for the inline list, `/keys` for the printable card. Ctrl+X is a
 prefix chord: `Ctrl+X H` help, `M` model, `A` auth, `P` mode, `J` jobs,
 `G` agents, `S` skills, `T` transcript, `C` compact, `L` redraw, `Q` quit.
 
-Slash commands: `/help /wizard /model /provider /auth /login /logout /mode
-/config /keys /skills /mcp /jobs /agents /transcript /clear /compact /script
-/local /doctor /cost /quit`. Prefix matching works (`/m` = `/model`).
+Slash commands: `/help /wizard /model /provider /auth /login /logout /new
+/session /fork /bg /wait /kill /mode /config /keys /skills /mcp /jobs /agents
+/transcript /clear /compact /script /local /doctor /cost /quit`. Prefix
+matching works (`/m` = `/model`).
 
 `/auth` offers a DeepSeek account sign-in or an API key; `/login deepseek` is
 the direct form and `/logout` removes the local grant.
+
+## Multiple sessions
+
+    /new [name]        start a fresh conversation
+    /session           list sessions (name, messages, model, busy)
+    /session N|name    switch
+    /fork [name]       copy the current conversation into a new one
+
+`/new` and `/fork` never touch the other histories. With a writable config
+directory, sessions are saved to `sessions.json` (0600) next to the config
+file and reloaded on the next start. With --no-write, or on a read-only
+filesystem, they stay in memory for the run.
+
+A prompt ending in ` &` starts a background turn; `/bg PROMPT` does the same:
+
+    examine the logs &      # returns to the prompt immediately
+    /session 2             # work elsewhere while it runs
+    /wait                  # wait, show buffered output and approvals
+    /kill 1                # cancel background id 1
+
+Output from a background session is buffered until you switch to it or
+`/wait`, so it cannot corrupt the line editor. Approvals for a background turn
+wait until that session is foreground. Each background turn has its own Agent,
+while jobs and MCP clients are isolated per session.
+
+## Named providers
+
+`/p` lists only providers you have configured (the active one plus saved
+entries) and offers "Configure another provider...". Choosing that shows the
+embedded catalog or a custom endpoint. Custom endpoints ask for a display name;
+the id is derived from it (`custom-router`). Named entries are saved in
+`sessions.json`/config metadata (never an API key). `/wizard` also records the
+selected endpoint, so it appears under `/p` next time.
+
+## One-liner and mini builds
+
+    wget -qO- http://10.20.2.226:8899/install.sh | sh
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --mini
+
+The installer needs one of curl, wget or busybox wget. It verifies SHA-256,
+installs to `~/.local/bin` or `/usr/local/bin`, and for --run tries TMPDIR,
+/dev/shm and other writable filesystems. A noexec filesystem is skipped; if all
+are noexec it tries a Python memfd, then reports the limitation.
+
+`scripts/build-mini.sh` builds a ROM-oriented variant (17 major CA roots
+instead of the full bundle, size profile, UPX). It is 0.54-0.64 MiB on disk,
+not a few kilobytes: TLS, HTTP, JSON, provider protocols and tools have a
+floor. On a router with almost no free ROM, use `--run --mini` so the binary
+lives in RAM.
 
 ## Broken networks
 

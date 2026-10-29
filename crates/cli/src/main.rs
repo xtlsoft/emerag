@@ -9,6 +9,7 @@ mod keys_card;
 mod local;
 mod oauth;
 mod providers;
+mod sessions;
 mod signals;
 mod ui;
 mod wizard;
@@ -296,12 +297,7 @@ fn main() {
                 cli.verbose,
                 token,
             );
-            let mut application = app::App {
-                cfg,
-                cli: cli.clone(),
-                ui,
-                agent,
-            };
+            let mut application = app::App::new(cfg, cli.clone(), ui, agent);
             if let Err(e) = application.run() {
                 eprintln!("emerag: {e}");
                 std::process::exit(1);
@@ -321,7 +317,7 @@ fn terminal_caps(cfg: &Config, cli: &Cli) -> Capabilities {
     caps
 }
 
-fn build_agent(cfg: &Config, cli: &Cli) -> Result<Agent, String> {
+pub(crate) fn build_agent(cfg: &Config, cli: &Cli) -> Result<Agent, String> {
     let provider = providers::build(cfg, cli)?;
     let mcp_values: Vec<emerag_json::Value> = cfg.mcp_servers.clone();
     let mut mcp_obj = emerag_json::Map::new();

@@ -13,6 +13,32 @@ Release profile: `opt-level = z`, fat LTO, `panic = abort`, symbols stripped,
 single codegen unit. The binary is a few MiB including TLS, the LLM adapters,
 the script engine and an embedded root CA bundle.
 
+## ROM-constrained (mini) builds
+
+    ./scripts/build-mini.sh x86_64-unknown-linux-musl \
+        aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf
+
+The mini variant:
+
+- enables the `mini` cargo feature, which selects a curated 17-CA trust bundle
+  (`assets/roots-mini.pem`) instead of the full 118-cert Mozilla bundle;
+- builds with the `size` profile (opt-level=z, fat LTO, one codegen unit,
+  panic=abort, strip);
+- runs `upx --best --lzma` when UPX is installed.
+
+Measured packed sizes: x86_64 0.61 MiB, aarch64 0.54 MiB, armv7 0.54 MiB.
+Unpacked is about 1.7 MiB. Use `--cacert` for a CA outside the curated set.
+
+A binary with TLS, HTTP, JSON, the provider adapters and the tool loop cannot
+fit in a few kilobytes. When ROM is nearly full, do not install it: the
+installer's `--run --mini` downloads into /dev/shm or another writable tmpfs
+and executes it there, so only RAM is consumed.
+
+Other size levers (not used for the shipped artifacts): nightly `build-std`
+with `panic_immediate_abort`, `-Z location-detail=none`, and dropping the
+script/MCP features at compile time. Each trades capability or toolchain
+stability for a few tens of kilobytes.
+
 ## Static Linux builds (musl)
 
     rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl

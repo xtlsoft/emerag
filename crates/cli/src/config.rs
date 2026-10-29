@@ -97,6 +97,8 @@ impl Default for UiConfig {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub provider: String,
+    /// Human-readable name of the selected provider (named custom providers).
+    pub provider_name: String,
     pub model: String,
     pub base_url: String,
     pub api: String,
@@ -126,6 +128,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             provider: String::new(),
+            provider_name: String::new(),
             model: String::new(),
             base_url: String::new(),
             api: String::new(),
@@ -156,6 +159,20 @@ impl Config {
             return PathBuf::from(p);
         }
         sys::config_dir().join("config.json")
+    }
+
+    /// Stored multi-session conversations live next to the config file.
+    pub fn sessions_path() -> PathBuf {
+        let mut p = Self::config_path();
+        p.set_file_name("sessions.json");
+        p
+    }
+
+    pub fn sessions_file(&self) -> PathBuf {
+        match &self.session_dir {
+            Some(dir) => dir.join("sessions.json"),
+            None => Self::sessions_path(),
+        }
     }
 
     /// Load from an explicit path, the default path, or return defaults.
@@ -287,6 +304,9 @@ impl Config {
         if let Some(x) = s("provider") {
             self.provider = x;
         }
+        if let Some(x) = s("provider_name") {
+            self.provider_name = x;
+        }
         if let Some(x) = s("model") {
             self.model = x;
         }
@@ -400,6 +420,12 @@ impl Config {
         let mut root = Map::new();
         root.insert("version".into(), json!(1));
         root.insert("provider".into(), Value::String(self.provider.clone()));
+        if !self.provider_name.is_empty() {
+            root.insert(
+                "provider_name".into(),
+                Value::String(self.provider_name.clone()),
+            );
+        }
         root.insert("model".into(), Value::String(self.model.clone()));
         root.insert("base_url".into(), Value::String(self.base_url.clone()));
         root.insert("api".into(), Value::String(self.api.clone()));
@@ -523,6 +549,13 @@ impl Config {
     }
 
     pub fn redacted_summary(&self) -> String {
+        let key = if !self.account_token.is_empty() {
+            "account login".to_string()
+        } else if self.api_key.is_empty() {
+            "(none)".to_string()
+        } else {
+            emerag_llm::redact(&self.api_key)
+        };
         format!(
             "provider={} model={} api={} base={} key={} mode={}",
             if self.provider.is_empty() {
@@ -541,11 +574,7 @@ impl Config {
             } else {
                 &self.base_url
             },
-            if self.api_key.is_empty() {
-                "(none)"
-            } else {
-                &emerag_llm::redact(&self.api_key)
-            },
+            key,
             self.mode.as_str()
         )
     }

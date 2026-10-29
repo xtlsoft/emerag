@@ -9,6 +9,11 @@ description = "emerag - a tiny portable agent for emergencies"
 name = "emerag"
 path = "src/main.rs"
 
+[features]
+default = []
+# Curated trust roots + release-friendly packing target (see build-mini.sh).
+mini = ["emerag-crypto/tiny-roots"]
+
 [dependencies]
 emerag-util = { workspace = true }
 emerag-json = { workspace = true }
@@ -20,4 +25,3 @@ emerag-script = { workspace = true }
 emerag-llm = { workspace = true }
 emerag-agent = { workspace = true }
 emerag-mcp = { workspace = true }
-emerag-infer = { workspace = true }

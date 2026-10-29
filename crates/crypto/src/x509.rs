@@ -476,8 +476,12 @@ pub struct CertStore {
 impl CertStore {
     /// The Mozilla-derived roots embedded in the binary.
     pub fn embedded() -> Result<&'static CertStore> {
+        #[cfg(feature = "tiny-roots")]
+        const ROOTS: &[u8] = include_bytes!("../assets/roots-mini.pem");
+        #[cfg(not(feature = "tiny-roots"))]
+        const ROOTS: &[u8] = include_bytes!("../assets/roots.pem");
         static EMBEDDED: std::sync::OnceLock<Result<CertStore>> = std::sync::OnceLock::new();
-        match EMBEDDED.get_or_init(|| CertStore::from_pem(include_bytes!("../assets/roots.pem"))) {
+        match EMBEDDED.get_or_init(|| CertStore::from_pem(ROOTS)) {
             Ok(store) => Ok(store),
             Err(e) => Err(e.clone()),
         }

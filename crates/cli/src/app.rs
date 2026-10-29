@@ -14,9 +14,423 @@ pub struct App {
     pub cli: Cli,
     pub ui: TermUi,
     pub agent: Agent,
+    pub sessions: Vec<crate::sessions::ChatSession>,
+    pub active_session: usize,
+    pub background: Vec<crate::sessions::BgHandle>,
+    next_bg: usize,
+    session_persist: bool,
 }
 
 impl App {
+    pub fn new(mut cfg: Config, cli: Cli, ui: TermUi, mut agent: Agent) -> Self {
+        let mut sessions = Vec::new();
+        let mut active = 0usize;
+        if !cfg.no_write {
+            if let Some((list, idx)) = crate::sessions::load(&cfg.sessions_file()) {
+                sessions = list;
+                active = idx;
+            }
+        }
+        if sessions.is_empty() {
+            sessions.push(crate::sessions::ChatSession::new(
+                "main",
+                cfg.model.clone(),
+                agent.session_snapshot(),
+            ));
+        }
+        if let Some(s) = sessions.get_mut(active) {
+            if s.model.is_empty() && !cfg.model.is_empty() {
+                s.model = cfg.model.clone();
+            }
+            agent.set_session(s.session.clone());
+            agent.set_model(s.model.clone());
+            cfg.model = s.model.clone();
+        }
+        let session_persist = !cfg.no_write;
+        App {
+            cfg,
+            cli,
+            ui,
+            agent,
+            sessions,
+            active_session: active,
+            background: Vec::new(),
+            next_bg: 1,
+            session_persist,
+        }
+    }
+
+    fn sync_active_session(&mut self) {
+        if let Some(s) = self.sessions.get_mut(self.active_session) {
+            s.session = self.agent.session_snapshot();
+            s.model = self.cfg.model.clone();
+        }
+    }
+
+    fn sync_and_save(&mut self) {
+        self.sync_active_session();
+        self.persist_sessions();
+    }
+
+    fn persist_sessions(&mut self) {
+        if self.cfg.no_write || !self.session_persist {
+            return;
+        }
+        if let Err(e) = crate::sessions::save(
+            &self.cfg.sessions_file(),
+            &self.sessions,
+            self.active_session,
+        ) {
+            self.session_persist = false;
+            eprintln!(
+                "sessions: cannot write {} ({e}); keeping sessions in memory",
+                self.cfg.sessions_file().display()
+            );
+        }
+    }
+
+    fn activate_session(&mut self, idx: usize) -> Result<(), String> {
+        if idx >= self.sessions.len() {
+            return Err(format!("no session {}", idx + 1));
+        }
+        if idx == self.active_session {
+            return Ok(());
+        }
+        self.sync_active_session();
+        self.active_session = idx;
+        let s = &self.sessions[idx];
+        self.agent.set_session(s.session.clone());
+        self.agent.set_model(s.model.clone());
+        self.cfg.model = s.model.clone();
+        self.replay_output(idx);
+        self.persist_sessions();
+        println!(
+            "session: {} ({} msgs)",
+            self.sessions[idx].name,
+            self.sessions[idx].session.messages.len()
+        );
+        Ok(())
+    }
+
+    fn replay_output(&mut self, idx: usize) {
+        if idx >= self.sessions.len() {
+            return;
+        }
+        let mut events = std::mem::take(&mut self.sessions[idx].output);
+        for bg in &mut self.background {
+            if bg.session_index == idx && !bg.done {
+                events.append(&mut bg.buffer);
+            }
+        }
+        for e in &events {
+            e.emit(&mut self.ui);
+        }
+        let ask = self
+            .background
+            .iter_mut()
+            .find(|b| b.session_index == idx && b.pending.is_some())
+            .and_then(|b| b.pending.take());
+        if let Some((q, reply)) = ask {
+            let answer = self.ui.ask(&q);
+            let _ = reply.send(answer);
+        }
+    }
+
+    fn poll_background(&mut self) {
+        let active = self.active_session;
+        let mut events = Vec::new();
+        let mut asks = Vec::new();
+        let mut done = Vec::new();
+        for bg in &mut self.background {
+            loop {
+                match bg.rx.try_recv() {
+                    Ok(crate::sessions::BgMessage::Event(e)) => {
+                        if bg.session_index == active {
+                            events.push(e);
+                        } else {
+                            bg.buffer.push(e);
+                        }
+                    }
+                    Ok(crate::sessions::BgMessage::Ask(q, reply)) => {
+                        if bg.session_index == active {
+                            asks.push((q, reply));
+                        } else {
+                            bg.pending = Some((q, reply));
+                        }
+                    }
+                    Ok(crate::sessions::BgMessage::Done {
+                        session,
+                        error,
+                        cancelled,
+                    }) => {
+                        bg.done = true;
+                        done.push((
+                            bg.id,
+                            bg.session_index,
+                            session,
+                            error,
+                            cancelled,
+                            std::mem::take(&mut bg.buffer),
+                        ));
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        bg.done = true;
+                        done.push((
+                            bg.id,
+                            bg.session_index,
+                            None,
+                            Some("background worker stopped unexpectedly".into()),
+                            false,
+                            std::mem::take(&mut bg.buffer),
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+        for e in events {
+            e.emit(&mut self.ui);
+        }
+        for (q, reply) in asks {
+            let answer = self.ui.ask(&q);
+            let _ = reply.send(answer);
+        }
+        for (id, idx, session, error, cancelled, buffered) in done {
+            let name = self
+                .sessions
+                .get(idx)
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| format!("session {}", idx + 1));
+            if let Some(s) = session {
+                if let Some(cs) = self.sessions.get_mut(idx) {
+                    cs.session = s;
+                    cs.busy = None;
+                }
+            } else if let Some(cs) = self.sessions.get_mut(idx) {
+                cs.busy = None;
+            }
+            if idx == active {
+                if let Some(cs) = self.sessions.get(idx) {
+                    self.agent.set_session(cs.session.clone());
+                    self.agent.set_model(cs.model.clone());
+                }
+                for e in &buffered {
+                    e.emit(&mut self.ui);
+                }
+            } else if let Some(cs) = self.sessions.get_mut(idx) {
+                cs.output.extend(buffered);
+            }
+            if let Some(err) = error {
+                println!("background {name} (id {id}) failed: {err}");
+            } else if cancelled {
+                println!("background {name} (id {id}) cancelled");
+            } else {
+                println!("background {name} (id {id}) finished");
+            }
+        }
+        self.background.retain(|b| !b.done);
+        self.sync_active_session();
+        self.persist_sessions();
+    }
+
+    fn start_background(&mut self, text: &str) -> Result<(), String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("empty prompt".into());
+        }
+        if self.sessions[self.active_session].busy.is_some() {
+            return Err("this session is already running; switch with /session or wait".into());
+        }
+        let idx = self.active_session;
+        let id = self.next_bg;
+        self.next_bg += 1;
+        let cancel = emerag_util::sync::CancelToken::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut cfg = self.cfg.clone();
+        cfg.model = self.sessions[idx].model.clone();
+        let mut cli = self.cli.clone();
+        cli.transcript = None;
+        let session = self.agent.session_snapshot();
+        let prompt = text.to_string();
+        let worker_cancel = cancel.clone();
+        std::thread::spawn(move || {
+            let (session, error) = match crate::build_agent(&cfg, &cli) {
+                Ok(mut agent) => {
+                    agent.set_session(session);
+                    agent.cancel = worker_cancel.clone();
+                    let mut ui = crate::sessions::WorkerUi {
+                        tx: tx.clone(),
+                        cancel: worker_cancel.clone(),
+                    };
+                    let result = agent.run_turn(&prompt, &mut ui);
+                    let session = agent.session_snapshot();
+                    agent.shutdown();
+                    let error = result.err().map(|e| e.to_string());
+                    (Some(session), error)
+                }
+                Err(e) => (None, Some(e)),
+            };
+            let cancelled = worker_cancel.is_cancelled();
+            let _ = tx.send(crate::sessions::BgMessage::Done {
+                session,
+                error,
+                cancelled,
+            });
+        });
+        self.sessions[idx].busy = Some(id);
+        self.background.push(crate::sessions::BgHandle {
+            id,
+            session_index: idx,
+            cancel,
+            rx,
+            buffer: Vec::new(),
+            pending: None,
+            done: false,
+        });
+        if self.cfg.mode == PermissionMode::Ask {
+            println!("note: approvals for this background turn wait until it is foreground (/session or /wait).");
+        }
+        println!(
+            "started background session {} (id {}); output is buffered until you switch or /wait",
+            self.sessions[idx].name, id
+        );
+        Ok(())
+    }
+
+    fn wait_background(&mut self, id: Option<usize>) -> Result<(), String> {
+        loop {
+            self.poll_background();
+            let running = self
+                .background
+                .iter()
+                .any(|b| id.map(|x| b.id == x).unwrap_or(true) && !b.done);
+            if !running {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+        Ok(())
+    }
+
+    fn session_index(&self, arg: &str) -> Option<usize> {
+        if let Ok(n) = arg.parse::<usize>() {
+            if n >= 1 && n <= self.sessions.len() {
+                return Some(n - 1);
+            }
+        }
+        self.sessions.iter().position(|s| s.name == arg)
+    }
+
+    fn list_sessions(&self) {
+        for (i, s) in self.sessions.iter().enumerate() {
+            let mark = if i == self.active_session { "*" } else { " " };
+            let busy = s
+                .busy
+                .map(|id| format!("  [background id {id}]"))
+                .unwrap_or_default();
+            println!("{mark} {}. {}{}", i + 1, s.summary(), busy);
+        }
+    }
+
+    fn new_session(&mut self, name: &str) -> Result<(), String> {
+        self.sync_active_session();
+        let name = if name.trim().is_empty() {
+            format!("session-{}", self.sessions.len() + 1)
+        } else {
+            name.trim().to_string()
+        };
+        if self.sessions.iter().any(|s| s.name == name) {
+            return Err(format!("session '{name}' already exists"));
+        }
+        self.sessions.push(crate::sessions::ChatSession::new(
+            name.clone(),
+            self.cfg.model.clone(),
+            emerag_agent::session::Session::new(),
+        ));
+        self.active_session = self.sessions.len() - 1;
+        self.agent.clear_session();
+        println!("new session: {name}");
+        self.persist_sessions();
+        Ok(())
+    }
+
+    fn fork_session(&mut self, name: &str) -> Result<(), String> {
+        self.sync_active_session();
+        let base = self.sessions[self.active_session].clone();
+        let name = if name.trim().is_empty() {
+            format!("fork-{}", self.sessions.len() + 1)
+        } else {
+            name.trim().to_string()
+        };
+        if self.sessions.iter().any(|s| s.name == name) {
+            return Err(format!("session '{name}' already exists"));
+        }
+        let mut forked = crate::sessions::ChatSession::new(name.clone(), base.model, base.session);
+        forked.output.clear();
+        self.sessions.push(forked);
+        self.active_session = self.sessions.len() - 1;
+        self.agent
+            .set_session(self.sessions[self.active_session].session.clone());
+        self.cfg.model = self.sessions[self.active_session].model.clone();
+        self.agent.set_model(self.cfg.model.clone());
+        println!("forked session: {name}");
+        self.persist_sessions();
+        Ok(())
+    }
+
+    fn configure_new_provider(&mut self) -> Result<(), String> {
+        let profiles = emerag_llm::catalog::all();
+        let labels: Vec<String> = profiles.iter().map(|p| p.label.to_string()).collect();
+        let i = match prompt::prompt_choice_caps(self.ui.caps, "Provider catalog", &labels, 0) {
+            Ok(i) => i,
+            Err(_) => return Ok(()),
+        };
+        let p = &profiles[i];
+        let mut id = p.id.to_string();
+        let mut name = p.label.to_string();
+        if p.id == "custom" {
+            name = self.ask_text("Provider name: ")?;
+            if name.trim().is_empty() {
+                name = "Custom endpoint".into();
+            }
+            id = crate::providers::custom_id(&self.cfg, &name);
+            let endpoint = self.ask_text("Endpoint: ")?;
+            if endpoint.trim().is_empty() {
+                return Err("endpoint is required".into());
+            }
+            self.cfg.base_url = crate::wizard::normalize_endpoint(&endpoint)?;
+            let kinds = [
+                "Chat Completions (OpenAI-compatible)",
+                "Responses (OpenAI Responses API)",
+                "Anthropic Messages",
+            ];
+            let idx = prompt::prompt_choice_caps(self.ui.caps, "API style", &kinds, 0)
+                .map_err(|e| e.to_string())?;
+            self.cfg.api = match idx {
+                1 => "responses".into(),
+                2 => "anthropic".into(),
+                _ => "chat".into(),
+            };
+            self.cfg.model.clear();
+        } else {
+            self.cfg.base_url = p.base_url.to_string();
+            self.cfg.api = p.api.as_str().to_string();
+            self.cfg.model = p.default_model().to_string();
+        }
+        self.cfg.provider = id;
+        self.cfg.provider_name = name.clone();
+        crate::providers::remember(&mut self.cfg);
+        self.rebuild_agent()?;
+        if !self.cfg.no_write {
+            let _ = self.cfg.save(&Config::config_path());
+        }
+        println!("provider: {name} ({})", self.cfg.base_url);
+        println!("use /login deepseek or /auth for an API key, then /model");
+        Ok(())
+    }
+
     pub fn banner(&self) {
         if self.cli.quiet {
             return;
@@ -33,6 +447,7 @@ impl App {
             env!("CARGO_PKG_VERSION"),
             if ascii { "" } else { "" }
         );
+        println!(" provider {}", crate::providers::display_name(&self.cfg));
         println!(" model   {}", display_or(&self.cfg.model, "(not set)"));
         println!(" endpoint {}", display_or(&self.cfg.base_url, "(not set)"));
         println!(" mode    {}", self.cfg.mode.as_str());
@@ -45,6 +460,13 @@ impl App {
                 .display()
         );
         println!(" shell   {}", self.agent.shell.label());
+        if self.sessions.len() > 1 {
+            println!(
+                " sessions {} (active: {})",
+                self.sessions.len(),
+                self.sessions[self.active_session].name
+            );
+        }
         if !self.agent.skills.skills.is_empty() {
             println!(" skills  {} loaded", self.agent.skills.skills.len());
         }
@@ -68,6 +490,7 @@ impl App {
     pub fn run(&mut self) -> Result<(), String> {
         self.banner();
         loop {
+            self.poll_background();
             let prompt_text = self.prompt();
             let input = match self.ui.read_input(&prompt_text) {
                 Ok(i) => i,
@@ -98,11 +521,22 @@ impl App {
                         if !self.handle_command(&line)? {
                             break;
                         }
+                    } else if let Some(bg) = line.strip_suffix(" &") {
+                        if !bg.trim().is_empty() {
+                            if let Err(e) = self.start_background(bg) {
+                                println!("{e}");
+                            }
+                        }
                     } else {
                         self.run_turn(&line)?;
                     }
                 }
             }
+        }
+        self.sync_active_session();
+        self.persist_sessions();
+        for bg in &self.background {
+            bg.cancel.cancel();
         }
         self.agent.shutdown();
         Ok(())
@@ -110,14 +544,27 @@ impl App {
 
     fn prompt(&self) -> String {
         let mode = self.cfg.mode.as_str();
+        let name = self
+            .sessions
+            .get(self.active_session)
+            .map(|s| s.name.as_str())
+            .unwrap_or("main");
         if self.ui.width >= 60 {
-            format!("emerag[{mode}]> ")
+            if self.sessions.len() > 1 {
+                format!("emerag[{name}][{mode}]> ")
+            } else {
+                format!("emerag[{mode}]> ")
+            }
         } else {
             "> ".to_string()
         }
     }
 
     fn run_turn(&mut self, text: &str) -> Result<(), String> {
+        if self.sessions[self.active_session].busy.is_some() {
+            println!("this session is running in the background; /wait or switch sessions");
+            return Ok(());
+        }
         crate::signals::clear();
         self.agent.cancel.reset();
         self.ui.token.reset();
@@ -125,6 +572,8 @@ impl App {
         crate::signals::clear();
         self.agent.cancel.reset();
         self.ui.token.reset();
+        self.sync_active_session();
+        self.persist_sessions();
         match result {
             Ok(r) => {
                 if r.cancelled {
@@ -160,6 +609,53 @@ impl App {
         let cmd = resolve_command(&cmd);
         match cmd {
             "" => {}
+            "new" => {
+                self.new_session(rest)?;
+            }
+            "session" | "sessions" => {
+                if rest.is_empty() {
+                    self.list_sessions();
+                } else if let Some(idx) = self.session_index(rest) {
+                    self.activate_session(idx)?;
+                } else {
+                    println!("unknown session '{rest}' (use /sessions)");
+                }
+            }
+            "fork" => {
+                self.fork_session(rest)?;
+            }
+            "bg" => {
+                if rest.is_empty() {
+                    println!("usage: /bg <prompt>");
+                } else if let Err(e) = self.start_background(rest) {
+                    println!("{e}");
+                }
+            }
+            "wait" => {
+                let id = rest.parse::<usize>().ok();
+                self.wait_background(id)?;
+            }
+            "kill" => {
+                let id = match rest.parse::<usize>() {
+                    Ok(n) => Some(n),
+                    Err(_) if rest.is_empty() => self.sessions[self.active_session].busy,
+                    Err(_) => {
+                        println!("usage: /kill <background id>");
+                        None
+                    }
+                };
+                if let Some(id) = id {
+                    if let Some(bg) = self.background.iter_mut().find(|b| b.id == id) {
+                        if let Some((_, reply)) = bg.pending.take() {
+                            let _ = reply.send(Answer::Cancel);
+                        }
+                        bg.cancel.cancel();
+                        println!("cancel requested for background id {id}");
+                    } else {
+                        println!("no background id {id}");
+                    }
+                }
+            }
             "help" | "h" | "?" => {
                 print!("{}", args::HELP);
                 crate::keys_card::print();
@@ -171,10 +667,15 @@ impl App {
             "quit" | "exit" | "q" => return Ok(false),
             "clear" | "cls" => {
                 self.agent.clear_session();
+                if let Some(s) = self.sessions.get_mut(self.active_session) {
+                    s.output.clear();
+                }
+                self.sync_and_save();
                 println!("conversation cleared (system prompt and skills kept)");
             }
             "compact" => {
                 self.agent.compact_now(&mut self.ui);
+                self.sync_and_save();
                 println!("context compacted");
             }
             "mode" | "perm" | "permissions" => {
@@ -240,20 +741,36 @@ impl App {
                         }
                     }
                 }
+                self.sync_and_save();
             }
             "provider" | "p" => {
-                let profiles = emerag_llm::catalog::all();
-                let labels: Vec<String> = profiles.iter().map(|p| p.label.to_string()).collect();
-                if let Ok(i) = prompt::prompt_choice_caps(self.ui.caps, "Provider", &labels, 0) {
-                    let p = &profiles[i];
-                    self.cfg.provider = p.id.into();
-                    self.cfg.base_url = p.base_url.into();
-                    self.cfg.api = p.api.as_str().into();
-                    self.cfg.model = p.default_model().into();
-                    self.rebuild_agent()?;
-                    println!("provider: {} ({})", p.label, p.base_url);
-                    println!("use /login deepseek or /auth for an API key, then /model");
+                let configured = crate::providers::configured(&self.cfg);
+                let mut labels: Vec<String> = configured
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        format!("{}{} ({})", if i == 0 { "* " } else { "  " }, p.name, p.id)
+                    })
+                    .collect();
+                labels.push("Configure another provider...".into());
+                match prompt::prompt_choice_caps(self.ui.caps, "Providers", &labels, 0) {
+                    Ok(i) if i < configured.len() => {
+                        crate::providers::apply(&mut self.cfg, &configured[i]);
+                        crate::providers::remember(&mut self.cfg);
+                        self.rebuild_agent()?;
+                        if !self.cfg.no_write {
+                            let _ = self.cfg.save(&Config::config_path());
+                        }
+                        println!(
+                            "provider: {} ({})",
+                            crate::providers::display_name(&self.cfg),
+                            self.cfg.base_url
+                        );
+                    }
+                    Ok(_) => self.configure_new_provider()?,
+                    Err(_) => {}
                 }
+                self.sync_and_save();
             }
             "auth" | "k" | "key" => {
                 let deepseek = self.cfg.provider.starts_with("deepseek")
@@ -273,6 +790,7 @@ impl App {
                         Ok(0) => {
                             crate::oauth::login_deepseek(&mut self.cfg, true)?;
                             self.rebuild_agent()?;
+                            self.sync_and_save();
                             println!("signed in; use /model to pick a model");
                         }
                         Ok(1) => {
@@ -296,16 +814,19 @@ impl App {
                 } else {
                     crate::oauth::login_deepseek(&mut self.cfg, true)?;
                     self.rebuild_agent()?;
+                    self.sync_and_save();
                     println!("signed in; use /model to pick a model");
                 }
             }
             "logout" | "signout" => {
                 crate::oauth::logout(&mut self.cfg)?;
                 self.rebuild_agent()?;
+                self.sync_and_save();
             }
             "wizard" | "w" | "setup" => {
                 crate::wizard::run(&mut self.cfg, &self.cli, &mut self.ui)?;
                 self.rebuild_agent()?;
+                self.sync_and_save();
                 println!("configuration active: {}", self.cfg.redacted_summary());
             }
             "config" | "c" => {

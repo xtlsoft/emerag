@@ -29,6 +29,15 @@ nobody has to reverse-engineer a claim from the README.
 - **Interfaces**: interactive TUI, Ctrl+X chords, slash commands, cooked-mode
   and ASCII fallbacks, one-shot, JSON output, automatic first-run wizard,
   DeepSeek account login/logout, doctor, guide, key card.
+- **Sessions**: /new, /session, /fork, persisted 0600 JSON (or memory with
+  --no-write), background turns via " &" or /bg with /wait and /kill; each
+  background turn gets its own Agent and MCP/job state.
+- **Named providers**: /p lists configured endpoints only, custom endpoints
+  get names, and the catalog is shown only through "Configure another
+  provider..."; wizard selections are remembered.
+- **Distribution**: POSIX/busybox installer with SHA-256 verification and
+  tmpfs/noexec fallbacks; mini build (17-CA roots, size profile, UPX) around
+  0.54-0.61 MiB.
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
 - **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,
@@ -43,6 +52,16 @@ nobody has to reverse-engineer a claim from the README.
   replayed; confirm on first real login.
 - **Termux on a physical device**: the empty-resolv.conf failure and the
   --dns fallback were reproduced in WSL, not on Android hardware.
+- **Background sessions**: output is deliberately buffered while you are at
+  the prompt, and approvals wait until that session is foreground. They are
+  tested through the TUI, not with a formal concurrency test.
+- **Mini build**: the curated bundle has 17 major CAs, not the full Mozilla
+  set; use --cacert for a private CA. UPX-packed binaries can be flagged by
+  some scanners, though they execute normally. The installer cannot execute
+  from a noexec filesystem unless /dev/shm, another exec tmpfs, or Python
+  memfd is available.
+- **Session files**: concurrent emerag processes writing the same
+  sessions.json are not locked; the last writer wins.
 
 - **Windows 7**: scripts/build-legacy-win.sh builds with Rust 1.77.2, the last
   toolchain supporting Windows 7. It was not verifiable in this environment

@@ -71,6 +71,13 @@ If you are already root, elevation is a no-op.
   created with mode 0600 on Unix.
 - `--no-write` keeps keys, config and sessions in memory only. Nothing is
   created in the working directory, including temp files.
+- Multi-session histories are written to `sessions.json` next to the config
+  file (0600). They contain complete messages and tool outputs, so treat them
+  like a transcript. If the directory is read-only, emerag keeps them in memory
+  and prints one warning.
+- Background turns use a separate Agent built from the same config; they do
+  not copy credentials into a second file, but their tool output is stored in
+  the same session history.
 - `--verbose` prints request headers but replaces Authorization, x-api-key
   and x-dsh-auth-token values.
 - A DeepSeek account grant is stored in the same 0600 config file, shown only

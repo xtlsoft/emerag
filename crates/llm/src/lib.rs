@@ -251,7 +251,7 @@ impl ClientConfig {
 pub type EventSink<'a> = dyn FnMut(StreamEvent) -> bool + 'a;
 
 /// A client that can list models and stream completions.
-pub trait Provider {
+pub trait Provider: Send + Sync {
     fn list_models(&self) -> Result<Vec<ModelInfo>, Error>;
     fn stream(&self, req: &ChatRequest, sink: &mut EventSink<'_>) -> Result<ChatResponse, Error>;
     /// Cheap connectivity/auth probe used by the wizard.

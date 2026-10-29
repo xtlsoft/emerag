@@ -60,6 +60,15 @@ pub fn run(cfg: &mut Config, cli: &Cli, ui: &mut TermUi) -> Result<(), String> {
     if !cfg.base_url.is_empty() {
         base_url = cfg.base_url.clone();
     }
+    let is_custom = profile.map(|p| p.id == "custom").unwrap_or(true);
+    let mut provider_name = profile
+        .map(|p| p.label.to_string())
+        .unwrap_or_else(|| "Custom endpoint".to_string());
+    if is_custom {
+        provider_name = ask_text(ui, "Provider name", "Custom endpoint")?;
+        cfg.provider = crate::providers::custom_id(cfg, &provider_name);
+    }
+    cfg.provider_name = provider_name;
     let account_profile = profile
         .map(|p| p.auth == emerag_llm::catalog::AuthKind::DeepSeekAccount)
         .unwrap_or(false);
@@ -280,6 +289,9 @@ pub fn run(cfg: &mut Config, cli: &Cli, ui: &mut TermUi) -> Result<(), String> {
         2 => PermissionMode::ReadOnly,
         _ => PermissionMode::Ask,
     };
+
+    // Remember this endpoint under its display name.
+    crate::providers::remember(cfg);
 
     // Save
     println!();

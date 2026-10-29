@@ -335,6 +335,16 @@ impl Agent {
         self.session = Session::new();
     }
 
+    /// Replace the conversation (used when switching stored sessions).
+    pub fn set_session(&mut self, session: Session) {
+        self.session = session;
+    }
+
+    /// Clone the conversation for a fork or a background worker.
+    pub fn session_snapshot(&self) -> Session {
+        self.session.clone()
+    }
+
     /// Force a context compaction pass (used by /compact).
     pub fn compact_now(&mut self, ui: &mut dyn Ui) {
         let system = self.system_prompt();

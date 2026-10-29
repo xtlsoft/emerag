@@ -10,10 +10,16 @@ Type at the prompt. Prefix matching is supported: `/m` means `/model`.
     /help  /h       context help and key card
     /wizard /w      provider + model setup wizard
     /model /m       switch model (numbered list)
-    /provider /p    switch provider profile
+    /provider /p    configured providers; "configure another" shows the catalog
     /auth  /k       authenticate: API key or DeepSeek account sign-in
     /login          sign in with a DeepSeek account (OAuth, no key)
     /logout         remove the stored DeepSeek account grant
+    /new [name]     new conversation (memory with --no-write)
+    /session [N]    list or switch conversations
+    /fork [name]    copy this conversation into a new one
+    /bg PROMPT      run a turn in the background (prompt ending in " &" too)
+    /wait [ID]      wait for background output and approvals
+    /kill [ID]      cancel a background turn
     /mode  /perm    permission mode: ask | auto | read-only | yolo
     /config /c      show effective configuration (secrets redacted)
     /keys           print the key card
