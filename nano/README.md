@@ -42,6 +42,13 @@ is prompt-based, not OpenAI tool JSON. Use --ask to confirm each command or
 
 Environment: EMERAG_API_KEY, EMERAG_MODEL, EMERAG_HOST.
 
+## Security
+
+There is no certificate verification and no CA store. Use this on a network
+you trust, or through a local proxy you control. Windows 98/ME without a
+usable CryptoAPI CSPRNG take a weak clock/process fallback and print a
+warning. Windows 2000+ uses CryptoGenRandom.
+
 ## Why it exists
 
 For machines where a Rust binary is too large or the OS is too old for the
