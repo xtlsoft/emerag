@@ -11,6 +11,8 @@
     emerag --keys             key card
     emerag --guide            offline tutorial
     emerag --models           list models for the current provider
+    emerag login deepseek     sign in with a DeepSeek account (no API key)
+    emerag --dns 1.1.1.1      nameserver for broken/absent DNS (repeatable)
     emerag local status|up    local model runtime
     emerag --version | --help
 
@@ -20,11 +22,12 @@ Exit codes: 0 success, 1 runtime failure, 2 usage/config error, 130 cancelled.
 
 If no endpoint and model are configured, emerag starts the wizard. It asks:
 
-1. **Provider** - numbered list (DeepSeek, OpenAI, Anthropic, OpenCode, local
-   servers, Custom).
+1. **Provider** - numbered list (DeepSeek API key, DeepSeek account sign-in,
+   OpenAI, Anthropic, OpenCode, local servers, Custom).
 2. **Endpoint** - defaults to the provider's; paste or type an override. If
-   DNS fails, it offers to pin an IP.
-3. **API key** - hidden input; leave empty for local servers.
+   DNS fails, it offers to pin an IP or use --dns.
+3. **API key** - hidden input; leave empty for local servers. The DeepSeek
+   account option opens a browser sign-in instead.
 4. **Model** - discovered from the provider's /models, or typed by hand.
 5. **Test** - a tiny completion proves the key and endpoint work.
 6. **Mode** - ask, auto, or read-only.
@@ -137,9 +140,12 @@ Type `/help` for the inline list, `/keys` for the printable card. Ctrl+X is a
 prefix chord: `Ctrl+X H` help, `M` model, `A` auth, `P` mode, `J` jobs,
 `G` agents, `S` skills, `T` transcript, `C` compact, `L` redraw, `Q` quit.
 
-Slash commands: `/help /wizard /model /provider /auth /mode /config /keys
-/skills /mcp /jobs /agents /transcript /clear /compact /script /local /doctor
-/cost /quit`. Prefix matching works (`/m` = `/model`).
+Slash commands: `/help /wizard /model /provider /auth /login /logout /mode
+/config /keys /skills /mcp /jobs /agents /transcript /clear /compact /script
+/local /doctor /cost /quit`. Prefix matching works (`/m` = `/model`).
+
+`/auth` offers a DeepSeek account sign-in or an API key; `/login deepseek` is
+the direct form and `/logout` removes the local grant.
 
 ## Broken networks
 
@@ -148,6 +154,12 @@ Slash commands: `/help /wizard /model /provider /auth /mode /config /keys
 
     # DNS broken, you know the IP
     emerag --resolve api.deepseek.com:443:203.0.113.10 --wizard
+
+    # DNS resolver itself is missing/broken (common on Termux/Android)
+    emerag --dns 223.5.5.5 --dns 1.1.1.1 --doctor
+
+    # Termux: the phone's DNS works but a static binary cannot see it;
+    # emerag tries Android properties and a public fallback automatically.
 
     # shortcut for the configured endpoint
     emerag --ip 203.0.113.10 -p "hi"
@@ -187,14 +199,42 @@ what the OS ships.
 - No telemetry, no update check, no phone-home beyond the configured LLM
   endpoint.
 
+## Reasoning, progress and probes
+
+Reasoning/thinking traces stream by default (dim, indented), so a model that is
+thinking does not look hung. Each model request prints a "waiting for ..."
+status and the reply time; each tool call reports its duration. `--verbose`
+adds more diagnostics. ANSI is optional: `--ascii` and `--no-color` work on
+serial consoles.
+
+The system prompt includes a measured environment probe: OS and version,
+kernel/init, architecture, user/root, available shells, package managers,
+common tools, whether the cwd is writable, DNS servers, memory and whether
+sudo/doas exists. The model therefore knows it is on Termux, a rescue shell or
+a container without guessing.
+
+## DeepSeek account sign-in
+
+    emerag login deepseek
+
+emerag generates a PKCE verifier, asks platform.deepseek.com for an authorize
+URL, starts a loopback listener and opens a browser (or prints the URL). On
+Termux, open the URL in the phone's browser; the callback to 127.0.0.1 reaches
+emerag. The token is stored in config (0600) and sent as `x-dsh-auth-token`;
+no `Authorization` header is used. Model names come from
+`https://api.deepseek.com/models`, and inference uses the OpenAI-compatible
+chat route so `reasoning_content` is replayed across tool calls.
+
 ## Troubleshooting
 
 | symptom | fix |
 | --- | --- |
 | "no endpoint configured" | `emerag --wizard` |
-| 401/403 | `/auth`, check the key and provider |
-| DNS error | `--resolve host:443:IP` |
+| 401/403 | `/auth` for a key, `/login deepseek` for an account |
+| "not signed in" | `/login deepseek` |
+| DNS error | `--dns 1.1.1.1`, `--resolve host:443:IP`, or `--ip` |
 | TLS certificate error | check clock, `--cacert`, or `--insecure` knowingly |
+| Termux: DNS works in apps, emerag fails | `--dns` (auto fallback usually fixes it) |
 | "stream stalled" | proxy/idle timeout; retry or switch model |
 | tools denied | `/mode auto` or answer the prompt |
 | no models listed | type the model name; some gateways hide /models |

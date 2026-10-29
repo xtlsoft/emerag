@@ -253,6 +253,34 @@ pub fn run(cfg: &Config, ascii: bool, color: bool) -> Report {
         }
     }
 
+    if !cfg.network.dns.is_empty() {
+        r.add(Status::Info, "dns config", cfg.network.dns.join(", "));
+    }
+    let discovered = emerag_http::dns::discover();
+    if !discovered.servers.is_empty() {
+        r.add(
+            Status::Info,
+            "dns discovery",
+            format!(
+                "{} ({})",
+                discovered
+                    .servers
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                discovered.source
+            ),
+        );
+    } else {
+        r.add_hint(
+            Status::Warn,
+            "dns discovery",
+            "no nameservers found (no /etc/resolv.conf, no Android net.dns)",
+            "use --dns <ip>; common: 1.1.1.1 or 8.8.8.8",
+        );
+    }
+
     // Network
     if cfg.base_url.is_empty() {
         r.add(
@@ -294,6 +322,7 @@ pub fn run(cfg: &Config, ascii: bool, color: bool) -> Report {
                             .map(|it| it.collect::<Vec<_>>());
                         let _ = tx.send(res);
                     });
+                    let mut system_error: Option<String> = None;
                     match rx.recv_timeout(Duration::from_secs(5)) {
                         Ok(Ok(list)) if !list.is_empty() => {
                             addrs = list;
@@ -311,24 +340,65 @@ pub fn run(cfg: &Config, ascii: bool, color: bool) -> Report {
                                 ),
                             );
                         }
-                        Ok(Ok(_)) => r.add_hint(
-                            Status::Fail,
-                            "dns",
-                            format!("{} resolved to nothing", url.host),
-                            "use --resolve host:443:IP",
-                        ),
-                        Ok(Err(e)) => r.add_hint(
-                            Status::Fail,
-                            "dns",
-                            format!("{}: {e}", url.host),
-                            "use --resolve host:443:IP or --ip",
-                        ),
-                        Err(_) => r.add_hint(
-                            Status::Fail,
-                            "dns",
-                            format!("resolver timed out for {}", url.host),
-                            "use --resolve host:443:IP",
-                        ),
+                        Ok(Ok(_)) => {
+                            system_error = Some(format!("{} resolved to nothing", url.host))
+                        }
+                        Ok(Err(e)) => system_error = Some(format!("{}: {e}", url.host)),
+                        Err(_) => {
+                            system_error = Some(format!("resolver timed out for {}", url.host))
+                        }
+                    }
+                    if addrs.is_empty() {
+                        let mut servers: Vec<std::net::IpAddr> = Vec::new();
+                        for spec in &cfg.network.dns {
+                            if let Ok(ip) = spec.trim().parse() {
+                                servers.push(ip);
+                            }
+                        }
+                        let explicit = !servers.is_empty();
+                        let source = if explicit {
+                            "--dns".to_string()
+                        } else {
+                            emerag_http::dns::discover().source
+                        };
+                        if servers.is_empty() {
+                            servers = emerag_http::dns::discover().servers;
+                        }
+                        let mut resolved = Vec::new();
+                        if !servers.is_empty() {
+                            if let Ok(ips) = emerag_http::dns::resolve(
+                                &url.host,
+                                port,
+                                &servers,
+                                Duration::from_secs(5),
+                            ) {
+                                resolved = ips;
+                            }
+                        }
+                        if !resolved.is_empty() {
+                            addrs = resolved
+                                .into_iter()
+                                .map(|ip| std::net::SocketAddr::new(ip, port))
+                                .collect();
+                            r.add_hint(
+                                Status::Warn,
+                                "dns",
+                                format!(
+                                    "system resolver failed; fallback via {} works: {}",
+                                    source,
+                                    addrs.iter().map(|a| a.ip().to_string()).collect::<Vec<_>>().join(", ")
+                                ),
+                                "the system resolver is broken; emerag will use the fallback automatically. Add --dns <ip> to pin it",
+                            );
+                        } else {
+                            r.add_hint(
+                                Status::Fail,
+                                "dns",
+                                system_error
+                                    .unwrap_or_else(|| format!("no address for {}", url.host)),
+                                "use --dns 1.1.1.1, --resolve host:443:IP or --ip",
+                            );
+                        }
                     }
                 } else if cfg.network.no_dns {
                     r.add(

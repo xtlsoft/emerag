@@ -11,7 +11,9 @@ Type at the prompt. Prefix matching is supported: `/m` means `/model`.
     /wizard /w      provider + model setup wizard
     /model /m       switch model (numbered list)
     /provider /p    switch provider profile
-    /auth  /k       set or replace the API key
+    /auth  /k       authenticate: API key or DeepSeek account sign-in
+    /login          sign in with a DeepSeek account (OAuth, no key)
+    /logout         remove the stored DeepSeek account grant
     /mode  /perm    permission mode: ask | auto | read-only | yolo
     /config /c      show effective configuration (secrets redacted)
     /keys           print the key card
@@ -38,7 +40,7 @@ This avoids collisions with Ctrl+C/D/L/R/Z that shells and terminals steal.
     Ctrl+X H      help / key card
     Ctrl+X W      wizard
     Ctrl+X M      model picker
-    Ctrl+X A      auth (API key)
+    Ctrl+X A      auth (API key or DeepSeek account)
     Ctrl+X P      permission mode
     Ctrl+X J      jobs
     Ctrl+X G      subagents

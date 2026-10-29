@@ -211,6 +211,38 @@ or use `auto`); `max_tokens` defaults to 8K non-thinking, 64K thinking, 128K at 
 `frequency_penalty`/`presence_penalty` are accepted and silently ignored; `finish_reason` may be
 `insufficient_system_resource` or `aborted` (retryable); the isolation field is `user_id`, not `user`.
 
+### 4.1 DeepSeek account (OAuth, no API key)
+
+Profile id `deepseek-account`. Use this when the user has a DeepSeek account
+rather than a platform API key.
+
+- Login is the Desktop Harness browser flow, verified live:
+  `POST https://platform.deepseek.com/auth-api/v0/dsh/auth_init` with
+  `{code_challenge, code_challenge_method:"S256", state, redirect_uri,
+  locale, login_source}` returns
+  `{code:0,data:{biz_code:0,biz_data:{authorize_url,authorize_id,expires_in}}}`.
+  The browser approves at `/dsh/authorize`, redirects to the loopback
+  `redirect_uri` with `code` and `state`, and
+  `POST .../dsh/auth_exchange` (with `code_verifier`, `device_id`,
+  `device_model`, `os_version`) returns `biz_data.token` plus an optional user.
+- Auth header is `x-dsh-auth-token: <token>`. There is no `Authorization`
+  header. The grant has no expiry or refresh flow; `/logout` removes it locally
+  and best-effort calls `/auth-api/v0/users/logout`.
+- Models: `GET https://api.deepseek.com/models` with the same header. Model ids
+  come from `data[].id`; do not hardcode them. A wrong grant returns HTTP 401
+  JSON `{"error":{"message":"Authentication Fails (invalid dsh token)",
+  "type":"authentication_error"}}` (verified).
+- Inference: `POST https://api.deepseek.com/chat/completions` with
+  `x-dsh-auth-token`. The OpenAI-compatible route is used because
+  `reasoning_content` is then replayed on assistant turns; DeepSeek requires
+  that replay when tools are present. The account grant is accepted on this
+  route (the invalid-token error proves the header is read there).
+- Client headers used for login: `x-client-platform: web`, `x-client-version`,
+  `x-client-locale: en_US`, `x-client-timezone-offset`, empty
+  `x-client-bundle-id`.
+- On Termux/Android, the browser can be on the same phone: open the printed
+  URL and the callback reaches `127.0.0.1` inside Termux.
+
 ## 5. OpenCode Console (formerly "Zen") and OpenCode Go
 
 Console is a paid pay-as-you-go model gateway run by the OpenCode project (curated GPT, Claude,

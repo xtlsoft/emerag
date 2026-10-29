@@ -9,12 +9,12 @@ binary was executed (natively or under qemu-user) and answered `--version`,
 
 | target | size | link | tested | notes |
 | --- | --- | --- | --- | --- |
-| x86_64-unknown-linux-musl | 1.70 MiB | static-pie, 0 DT_NEEDED, 0 GLIBC refs | native | reference build |
-| i686-unknown-linux-musl | 1.55 MiB | static-pie | qemu-i386 | 32-bit x86 |
-| aarch64-unknown-linux-musl | 1.44 MiB | static-pie | qemu-aarch64 | |
-| armv7-unknown-linux-musleabihf | 1.40 MiB | static-pie | qemu-arm | hard-float ABI |
-| riscv64gc-unknown-linux-musl | 1.40 MiB | static-pie | qemu-riscv64 | |
-| s390x-unknown-linux-gnu | 1.70 MiB | dynamic (glibc) | not executed | no upstream musl target |
+| x86_64-unknown-linux-musl | 1.78 MiB | static-pie, 0 DT_NEEDED, 0 GLIBC refs | native | reference build |
+| i686-unknown-linux-musl | 1.61 MiB | static-pie | qemu-i386 | 32-bit x86 |
+| aarch64-unknown-linux-musl | 1.50 MiB | static-pie | qemu-aarch64 | |
+| armv7-unknown-linux-musleabihf | 1.46 MiB | static-pie | qemu-arm | hard-float ABI |
+| riscv64gc-unknown-linux-musl | 1.46 MiB | static-pie | qemu-riscv64 | |
+| s390x-unknown-linux-gnu | 1.78 MiB | dynamic (glibc) | not executed | no upstream musl target |
 | loongarch64-unknown-linux-musl | - | static-pie | not built | needs a loongarch linker |
 
 Verification commands:
@@ -43,6 +43,41 @@ libc and is out of scope.
 The binary is static-pie; on kernels that predate static-pie support in the
 toolchain's crt, convert with `-C relocation-model=static` at build time.
 Nothing in the code requires PIE.
+
+## Android / Termux
+
+Termux can run the static Linux musl build directly (aarch64, armv7, x86_64).
+There is no glibc or bionic dependency. The binary is static-pie, which Android
+kernels execute normally from app-private storage.
+
+The common failure is name resolution, not TLS or the network: a static musl
+binary reads `/etc/resolv.conf`, which Android does not provide, so
+getaddrinfo() fails even though the phone's own apps resolve names through
+netd. emerag therefore:
+
+1. reads `/etc/resolv.conf` if present;
+2. on Android/Termux, reads `net.dns1`..`net.dns4` and any DNS entries in the
+   `getprop` dump;
+3. if no nameserver is visible, uses a public fallback
+   (223.5.5.5, 1.1.1.1, 8.8.8.8) and says so in `--doctor`;
+4. queries A and AAAA over UDP directly, then connects using the hostname for
+   TLS verification.
+
+Override with `--dns 1.1.1.1` (repeatable) or pin an address with
+`--resolve host:443:IP`. `--doctor` shows whether the system resolver failed
+and whether the fallback worked. This was reproduced in WSL with an empty
+`/etc/resolv.conf`: system DNS failed, the `--dns` fallback resolved, TCP and
+TLS succeeded. It has not been run on a physical Android device here.
+
+Other Termux notes:
+
+- `termux-open-url` is used for the DeepSeek sign-in page when available;
+  otherwise copy the printed URL into the phone browser. The loopback callback
+  works because browser and Termux share the phone's network namespace.
+- Android may freeze background processes; run emerag inside tmux and use
+  `termux-wake-lock` for long jobs.
+- Some networks block outbound UDP/53. If the fallback fails, use
+  `--resolve` with a known IP; TLS still verifies the hostname.
 
 ## Windows
 

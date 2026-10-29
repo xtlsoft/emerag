@@ -60,12 +60,21 @@ pub fn run(cfg: &mut Config, cli: &Cli, ui: &mut TermUi) -> Result<(), String> {
     if !cfg.base_url.is_empty() {
         base_url = cfg.base_url.clone();
     }
+    let account_profile = profile
+        .map(|p| p.auth == emerag_llm::catalog::AuthKind::DeepSeekAccount)
+        .unwrap_or(false);
 
-    // Endpoint
+    // Endpoint. An account grant is bound to the DeepSeek origin, so do not
+    // let the wizard send it somewhere else.
     println!();
-    let endpoint = ask_text(ui, "Endpoint", &base_url)?;
+    let endpoint = if account_profile {
+        println!("Endpoint: {base_url} (fixed for DeepSeek account sign-in)");
+        base_url.clone()
+    } else {
+        ask_text(ui, "Endpoint", &base_url)?
+    };
     let endpoint = if endpoint.trim().is_empty() {
-        base_url
+        base_url.clone()
     } else {
         endpoint
     };
@@ -88,11 +97,14 @@ pub fn run(cfg: &mut Config, cli: &Cli, ui: &mut TermUi) -> Result<(), String> {
         };
     }
 
-    // API key
+    // API key or DeepSeek account sign-in
+    let is_account = account_profile;
     let needs_key = profile
         .map(|p| !matches!(p.auth, emerag_llm::catalog::AuthKind::None))
         .unwrap_or(true);
-    if needs_key {
+    if is_account {
+        crate::oauth::login_deepseek(cfg, false)?;
+    } else if needs_key {
         println!();
         if cfg.api_key.is_empty() {
             let key = ask_secret(ui, "API key (input hidden; leave empty to skip)")?;
@@ -115,11 +127,47 @@ pub fn run(cfg: &mut Config, cli: &Cli, ui: &mut TermUi) -> Result<(), String> {
     if let Ok(url) = Url::parse(&cfg.base_url) {
         print!("Checking DNS for {} ... ", url.host);
         let _ = std::io::stdout().flush();
-        match resolve_with_timeout(&url.host, url.port, Duration::from_secs(6)) {
+        let mut fallback: Vec<std::net::IpAddr> = Vec::new();
+        for spec in &cfg.network.dns {
+            if let Ok(ip) = spec.trim().parse::<std::net::IpAddr>() {
+                fallback.push(ip);
+            }
+        }
+        if fallback.is_empty() {
+            fallback = emerag_http::dns::discover().servers;
+        }
+        let resolved = match resolve_with_timeout(&url.host, url.port, Duration::from_secs(6)) {
+            Ok(addrs) => Ok(addrs),
+            Err(e) => {
+                if !fallback.is_empty() {
+                    match emerag_http::dns::resolve(
+                        &url.host,
+                        url.port,
+                        &fallback,
+                        Duration::from_secs(5),
+                    ) {
+                        Ok(ips) if !ips.is_empty() => {
+                            println!(
+                                "system resolver failed ({e}); DNS fallback works: {}",
+                                ips.iter()
+                                    .map(|i| i.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
+                            Ok(ips.iter().map(|i| i.to_string()).collect())
+                        }
+                        _ => Err(e),
+                    }
+                } else {
+                    Err(e)
+                }
+            }
+        };
+        match resolved {
             Ok(addrs) => println!("ok ({})", addrs.join(", ")),
             Err(e) => {
                 println!("failed: {e}");
-                println!("If this machine has no working DNS, pin the endpoint to an IP.");
+                println!("If this machine has no working DNS, pin the endpoint to an IP, or restart with --dns <nameserver>.");
                 if prompt::prompt_yes_no_caps(caps, "Pin an IP address now?", true).unwrap_or(false)
                 {
                     let ip = ask_text(ui, "IP address", "")?;

@@ -49,7 +49,8 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(b"data: " + json.dumps(obj).encode() + b"\n\n")
             self.wfile.flush()
         if not has_tool_result:
-            send(peer(self, {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "Let me read that file."}}]}))
+            send(peer(self, {"choices": [{"index": 0, "delta": {"role": "assistant", "reasoning_content": "I should inspect the file before answering. "}}]}))
+            send(peer(self, {"choices": [{"index": 0, "delta": {"content": "Let me read that file."}}]}))
             args = json.dumps({"path": "tests/data/hello.txt"})
             send(peer(self, {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": args}}]}}]}))
             send(peer(self, {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}))
@@ -57,6 +58,7 @@ class H(BaseHTTPRequestHandler):
         else:
             tool = next(m for m in msgs if m.get("role") == "tool")
             content = "The file says: " + tool["content"][:200]
+            send(peer(self, {"choices": [{"index": 0, "delta": {"reasoning_content": "The tool returned the file contents. "}}]}))
             for word in content.split(" "):
                 send(peer(self, {"choices": [{"index": 0, "delta": {"content": word + " "}}]}))
             send(peer(self, {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}))

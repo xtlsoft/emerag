@@ -107,6 +107,7 @@ fn cache_dir(hash: &[u8; 32]) -> PathBuf {
 
 struct Entry {
     name: String,
+    #[cfg_attr(windows, allow(dead_code))]
     mode: u32,
     data: Vec<u8>,
 }

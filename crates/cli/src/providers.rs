@@ -27,11 +27,18 @@ pub fn api_kind(cfg: &Config) -> ApiKind {
 }
 
 pub fn client_config(cfg: &Config, _cli: &Cli) -> Result<ClientConfig, String> {
-    if cfg.base_url.trim().is_empty() {
+    let profile = emerag_llm::catalog::find(&profile_id(cfg));
+    let base_url = if !cfg.base_url.trim().is_empty() {
+        cfg.base_url.clone()
+    } else if let Some(p) = profile {
+        p.base_url.to_string()
+    } else {
+        String::new()
+    };
+    if base_url.trim().is_empty() {
         return Err("no endpoint configured: run --wizard or pass --base-url".into());
     }
-    let url = emerag_http::Url::parse(&cfg.base_url).map_err(|e| format!("bad endpoint: {e}"))?;
-    let profile = emerag_llm::catalog::find(&profile_id(cfg));
+    let url = emerag_http::Url::parse(&base_url).map_err(|e| format!("bad endpoint: {e}"))?;
     let api = api_kind(cfg);
 
     let mut headers = Vec::new();
@@ -41,6 +48,23 @@ pub fn client_config(cfg: &Config, _cli: &Cli) -> Result<ClientConfig, String> {
         }
     }
     headers.extend(cfg_headers(cfg));
+
+    let mut dns_servers: Vec<std::net::IpAddr> = Vec::new();
+    for spec in &cfg.network.dns {
+        let ip: std::net::IpAddr = spec
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .map_err(|_| format!("bad --dns '{spec}' (expected an IP address)"))?;
+        if !dns_servers.contains(&ip) {
+            dns_servers.push(ip);
+        }
+    }
+    let dns_first = !dns_servers.is_empty();
+    if dns_servers.is_empty() {
+        dns_servers = emerag_http::dns::discover().servers;
+    }
 
     let mut resolve = ResolveTable::new();
     for spec in &cfg.network.resolve {
@@ -117,22 +141,31 @@ pub fn client_config(cfg: &Config, _cli: &Cli) -> Result<ClientConfig, String> {
                 resolve: ResolveTable::new(),
                 tls: TlsOptions::default(),
                 proxy: None,
+                dns_servers: Vec::new(),
+                dns_first: false,
             };
             cc.api = api;
             cc
         }
     };
-    cc.base_url = cfg.base_url.trim_end_matches('/').to_string();
+    cc.base_url = base_url.trim_end_matches('/').to_string();
     cc.api = api;
     cc.model = cfg.model.clone();
     cc.credentials = Credentials {
         api_key: cfg.api_key.clone(),
+        account_token: if cfg.account_token.is_empty() {
+            None
+        } else {
+            Some(cfg.account_token.clone())
+        },
         extra_headers: headers.clone(),
     };
     cc.extra_headers = headers;
     cc.resolve = resolve;
     cc.tls = tls;
     cc.proxy = proxy;
+    cc.dns_servers = dns_servers;
+    cc.dns_first = dns_first;
     cc.timeout = Duration::from_secs(cfg.network.timeout_secs.max(5));
     cc.verbose = cfg.mode == crate::config::PermissionMode::Yolo && false;
     Ok(cc)

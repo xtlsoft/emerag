@@ -71,8 +71,16 @@ If you are already root, elevation is a no-op.
   created with mode 0600 on Unix.
 - `--no-write` keeps keys, config and sessions in memory only. Nothing is
   created in the working directory, including temp files.
-- `--verbose` prints request headers but replaces Authorization and x-api-key
-  values.
+- `--verbose` prints request headers but replaces Authorization, x-api-key
+  and x-dsh-auth-token values.
+- A DeepSeek account grant is stored in the same 0600 config file, shown only
+  as a redacted marker, and sent only to api.deepseek.com as
+  `x-dsh-auth-token`. It has no expiry or refresh flow. `/logout` removes the
+  local grant first and then best-effort revokes it at the platform.
+- When Android exposes no nameserver at all, emerag falls back to public DNS
+  (223.5.5.5, 1.1.1.1, 8.8.8.8). That leaks the queried hostname to those
+  resolvers. Use `--dns` to choose a resolver, or `--resolve` to avoid DNS
+  entirely. This fallback is only enabled on Android/Termux.
 
 ## Transcripts
 

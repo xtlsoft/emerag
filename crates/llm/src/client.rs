@@ -31,6 +31,8 @@ pub fn build(cfg: &ClientConfig) -> Result<Box<dyn Provider>, Error> {
         verbose: cfg.verbose,
         cancel: CancelToken::new(),
         no_dns: false,
+        dns_servers: cfg.dns_servers.clone(),
+        dns_first: cfg.dns_first,
     };
     Ok(Box::new(Adapter {
         cfg: cfg.clone(),
@@ -79,8 +81,31 @@ impl Adapter {
     }
 
     fn models_url(&self) -> String {
+        if let Some(url) = self.profile().and_then(|p| p.absolute_models_url) {
+            return url.to_string();
+        }
         let path = self.profile().map(|p| p.models_path).unwrap_or("models");
         self.url(path)
+    }
+
+    fn require_credentials(&self) -> Result<(), Error> {
+        if let Some(p) = self.profile() {
+            if p.auth == crate::catalog::AuthKind::DeepSeekAccount
+                && self
+                    .cfg
+                    .credentials
+                    .account_token
+                    .as_deref()
+                    .unwrap_or("")
+                    .is_empty()
+            {
+                return Err(Error::new(
+                    ErrorKind::Auth,
+                    "not signed in to a DeepSeek account; run /login deepseek (or use a DeepSeek API key)",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn auth_headers(&self) -> Vec<(String, String)> {
@@ -104,6 +129,11 @@ impl Adapter {
                         headers.push(("x-api-key".into(), self.cfg.credentials.api_key.clone()));
                     }
                 }
+                crate::catalog::AuthKind::DeepSeekAccount => {
+                    if let Some(token) = &self.cfg.credentials.account_token {
+                        headers.push(("x-dsh-auth-token".into(), token.clone()));
+                    }
+                }
             }
             // Anthropic transition period: send both forms.
             if p.id == "anthropic" && !self.cfg.credentials.api_key.is_empty() {
@@ -112,6 +142,8 @@ impl Adapter {
             if p.has(Quirk::RequiresSessionHeader) {
                 headers.push(("x-opencode-session".into(), self.session_id.clone()));
             }
+        } else if let Some(token) = &self.cfg.credentials.account_token {
+            headers.push(("x-dsh-auth-token".into(), token.clone()));
         } else if !self.cfg.credentials.api_key.is_empty() {
             headers.push((
                 "authorization".into(),
@@ -188,6 +220,7 @@ impl Adapter {
     // ---------- model listing ----------
 
     fn list_models_impl(&self) -> Result<Vec<ModelInfo>, Error> {
+        self.require_credentials()?;
         let mut resp = self.get(&self.models_url())?;
         if resp.status == 404 || resp.status == 405 {
             if let Some(p) = self.profile() {
@@ -981,7 +1014,10 @@ fn build_chat_body(cfg: &ClientConfig, req: &ChatRequest) -> Value {
                     pairs.push(("tool_calls", Value::Array(calls)));
                 }
                 if let Some(r) = &m.reasoning {
-                    if profile.map(|p| p.id == "deepseek").unwrap_or(false) {
+                    if profile
+                        .map(|p| matches!(p.id, "deepseek" | "deepseek-account"))
+                        .unwrap_or(false)
+                    {
                         pairs.push(("reasoning_content", vstr(r)));
                     }
                 }

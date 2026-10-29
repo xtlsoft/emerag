@@ -7,6 +7,7 @@ mod doctor;
 mod guide;
 mod keys_card;
 mod local;
+mod oauth;
 mod providers;
 mod signals;
 mod ui;
@@ -193,6 +194,22 @@ fn main() {
             eprintln!("MCP server mode is not implemented yet; MCP client mode is available.");
             std::process::exit(1);
         }
+        Action::Login(provider) => {
+            if provider != "deepseek" {
+                eprintln!("emerag: only 'deepseek' account login is supported");
+                std::process::exit(2);
+            }
+            match oauth::login_deepseek(&mut cfg, true) {
+                Ok(()) => {
+                    println!("next: emerag --models, then emerag --model <id>");
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("emerag: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Action::Interactive | Action::Prompt(_) | Action::Help | Action::Version => {}
     }
 
@@ -214,7 +231,30 @@ fn main() {
         std::process::exit(2);
     }
 
-    let mut agent = match build_agent(&cfg, &cli) {
+    // First run with no configuration: open the wizard instead of failing.
+    if matches!(cli.action, Action::Interactive) && wizard::first_run_needed(&cfg) {
+        let token = emerag_util::sync::CancelToken::new();
+        let mut ui = ui::TermUi::new(
+            caps,
+            color,
+            ascii,
+            cli.width.or(cfg.ui.width),
+            cli.verbose,
+            token,
+        );
+        println!("No model is configured yet. Starting the setup wizard (Ctrl+C to skip).");
+        match wizard::run(&mut cfg, &cli, &mut ui) {
+            Ok(()) => {}
+            Err(e) => eprintln!("wizard: {e}"),
+        }
+        if wizard::first_run_needed(&cfg) {
+            eprintln!("emerag: still no endpoint or model configured.");
+            eprintln!("Run 'emerag --wizard', or set EMERAG_BASE_URL and EMERAG_MODEL.");
+            std::process::exit(2);
+        }
+    }
+
+    let agent = match build_agent(&cfg, &cli) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("emerag: {e}");
@@ -248,7 +288,7 @@ fn main() {
         }
         _ => {
             let token = agent.cancel.clone();
-            let mut ui = ui::TermUi::new(
+            let ui = ui::TermUi::new(
                 caps,
                 color,
                 ascii,
@@ -256,16 +296,6 @@ fn main() {
                 cli.verbose,
                 token,
             );
-            if wizard::first_run_needed(&cfg) {
-                println!("No model configured yet. Starting the setup wizard (Ctrl+C to skip).");
-                match wizard::run(&mut cfg, &cli, &mut ui) {
-                    Ok(()) => match build_agent(&cfg, &cli) {
-                        Ok(a) => agent = a,
-                        Err(e) => eprintln!("wizard: {e}"),
-                    },
-                    Err(e) => eprintln!("wizard aborted: {e}"),
-                }
-            }
             let mut application = app::App {
                 cfg,
                 cli: cli.clone(),
@@ -354,6 +384,9 @@ fn apply_cli(cfg: &mut Config, cli: &Cli) {
     }
     if !cli.resolve.is_empty() {
         cfg.network.resolve.extend(cli.resolve.clone());
+    }
+    if !cli.dns.is_empty() {
+        cfg.network.dns.extend(cli.dns.clone());
     }
     if let Some(ip) = &cli.ip {
         cfg.network.ip = Some(ip.clone());

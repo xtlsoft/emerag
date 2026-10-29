@@ -36,6 +36,10 @@ pub struct Client {
     /// When true the system resolver is never used; only ResolveTable entries
     /// and IP-literal hosts may be connected to.
     pub no_dns: bool,
+    /// Extra nameservers used when the system resolver fails (Termux/Android).
+    pub dns_servers: Vec<IpAddr>,
+    /// Try dns_servers before the system resolver (explicit --dns).
+    pub dns_first: bool,
 }
 
 impl Client {
@@ -244,7 +248,7 @@ impl Client {
             None => "no usable address".to_string(),
         };
         Err(Error::new(format!(
-            "cannot connect to {what} {host}:{port}: {detail}; if DNS is broken or the host is unreachable, pin it with --resolve {host}:{port}:<ip> or --ip <ip>"
+            "cannot connect to {what} {host}:{port}: {detail}; if DNS is broken pin it with --resolve {host}:{port}:<ip> or --ip <ip>, or use --dns <ip>; otherwise check the endpoint, proxy or firewall"
         )))
     }
 
@@ -260,6 +264,16 @@ impl Client {
                 "DNS is disabled and {host}:{port} has no address override; use --resolve {host}:{port}:<ip> or --ip <ip>"
             )));
         }
+        if self.dns_first && !self.dns_servers.is_empty() {
+            if let Ok(ips) =
+                crate::dns::resolve(host, port, &self.dns_servers, Duration::from_secs(4))
+            {
+                if !ips.is_empty() {
+                    return Ok(ips);
+                }
+            }
+        }
+        let mut last_error: Option<String>;
         match (host, port).to_socket_addrs() {
             Ok(iter) => {
                 let mut out: Vec<IpAddr> = Vec::new();
@@ -268,17 +282,29 @@ impl Client {
                         out.push(sa.ip());
                     }
                 }
-                if out.is_empty() {
-                    return Err(Error::new(format!(
-                        "DNS returned no addresses for {host}:{port}; use --resolve {host}:{port}:<ip> or --ip <ip>"
-                    )));
+                if !out.is_empty() {
+                    return Ok(out);
                 }
-                Ok(out)
+                last_error = Some("system resolver returned no addresses".into());
             }
-            Err(e) => Err(Error::new(format!(
-                "cannot resolve {host}: {e}; DNS may be broken: use --resolve {host}:{port}:<ip> or --ip <ip>"
-            ))),
+            Err(e) => last_error = Some(format!("system resolver: {e}")),
         }
+        if !self.dns_servers.is_empty() {
+            match crate::dns::resolve(host, port, &self.dns_servers, Duration::from_secs(4)) {
+                Ok(ips) if !ips.is_empty() => return Ok(ips),
+                Ok(_) => {
+                    last_error = Some(format!(
+                        "{}; custom DNS returned no addresses",
+                        last_error.unwrap_or_default()
+                    ))
+                }
+                Err(e) => last_error = Some(format!("{}; {e}", last_error.unwrap_or_default())),
+            }
+        }
+        let detail = last_error.unwrap_or_else(|| "no addresses".into());
+        Err(Error::new(format!(
+            "DNS lookup failed for {host}:{port}: {detail}; use --dns <ip> (e.g. --dns 1.1.1.1), --resolve {host}:{port}:<ip>, or --ip <ip>"
+        )))
     }
 
     fn effective_connect_timeout(&self) -> Duration {
@@ -317,6 +343,8 @@ impl Default for Client {
             verbose: false,
             cancel: CancelToken::new(),
             no_dns: false,
+            dns_servers: Vec::new(),
+            dns_first: false,
         }
     }
 }
@@ -423,6 +451,8 @@ fn is_body_header(name: &str) -> bool {
 fn is_sensitive_header(name: &str) -> bool {
     name.eq_ignore_ascii_case("authorization")
         || name.eq_ignore_ascii_case("proxy-authorization")
+        || name.eq_ignore_ascii_case("x-api-key")
+        || name.eq_ignore_ascii_case("x-dsh-auth-token")
         || name.eq_ignore_ascii_case("cookie")
         || name.eq_ignore_ascii_case("cookie2")
 }

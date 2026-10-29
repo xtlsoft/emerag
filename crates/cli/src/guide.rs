@@ -17,6 +17,10 @@ pub fn run() -> std::io::Result<()> {
              Pick a provider by number, press Enter for its endpoint, paste the key\n\
              (it is not echoed when typing in a terminal), then pick a model from\n\
              the discovered list. If DNS is broken, answer y and type an IP.\n\
+             \n\
+             With a DeepSeek account instead of a key:\n\
+             \n    emerag login deepseek\n\
+             \nThe browser approves the login; model names come from /models.\n\
              Nothing is saved unless you say yes at the end.\n",
         ),
         (
@@ -42,6 +46,9 @@ pub fn run() -> std::io::Result<()> {
             "When the network is broken",
             "Pin the endpoint to an IP:\n\
              \n    emerag --resolve api.deepseek.com:443:203.0.113.10 --wizard\n\
+             \nOr give emerag a nameserver when the system resolver is missing\n\
+             (Termux/Android, rescue images):\n\
+             \n    emerag --dns 1.1.1.1 --doctor\n\
              \nTLS still verifies the hostname, so pinning is safe.\n",
         ),
     ];

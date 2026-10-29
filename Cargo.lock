@@ -64,6 +64,7 @@ dependencies = [
 name = "emerag-llm"
 version = "0.1.0"
 dependencies = [
+ "emerag-crypto",
  "emerag-http",
  "emerag-json",
  "emerag-util",

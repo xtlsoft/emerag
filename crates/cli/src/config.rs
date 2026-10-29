@@ -48,6 +48,8 @@ impl PermissionMode {
 pub struct NetworkConfig {
     /// host:port:ip entries (curl --resolve style).
     pub resolve: Vec<String>,
+    /// Explicit nameservers (--dns), used before the system resolver.
+    pub dns: Vec<String>,
     /// Connect to this IP for the selected endpoint (single override).
     pub ip: Option<String>,
     pub insecure: bool,
@@ -62,6 +64,7 @@ impl Default for NetworkConfig {
     fn default() -> Self {
         NetworkConfig {
             resolve: Vec::new(),
+            dns: Vec::new(),
             ip: None,
             insecure: false,
             cacert: None,
@@ -98,6 +101,8 @@ pub struct Config {
     pub base_url: String,
     pub api: String,
     pub api_key: String,
+    /// DeepSeek account grant from browser sign-in.
+    pub account_token: String,
     pub mode: PermissionMode,
     pub max_turns: u32,
     pub context_limit: u32,
@@ -125,6 +130,7 @@ impl Default for Config {
             base_url: String::new(),
             api: String::new(),
             api_key: String::new(),
+            account_token: String::new(),
             mode: PermissionMode::Ask,
             max_turns: 32,
             context_limit: 96_000,
@@ -194,6 +200,10 @@ impl Config {
             self.api_key = v;
             notes.push("API key from EMERAG_API_KEY".into());
         }
+        if let Some(v) = env("EMERAG_ACCOUNT_TOKEN") {
+            self.account_token = v;
+            notes.push("DeepSeek account token from EMERAG_ACCOUNT_TOKEN".into());
+        }
         if let Some(v) = env("EMERAG_MODE").and_then(|s| PermissionMode::parse(&s)) {
             self.mode = v;
         }
@@ -207,6 +217,11 @@ impl Config {
         }
         if let Some(v) = env("EMERAG_IP") {
             self.network.ip = Some(v);
+        }
+        if let Some(v) = env("EMERAG_DNS") {
+            for spec in v.split([',', ';']).filter(|s| !s.trim().is_empty()) {
+                self.network.dns.push(spec.trim().to_string());
+            }
         }
         if let Some(v) = env("EMERAG_INSECURE") {
             self.network.insecure = matches!(v.as_str(), "1" | "true" | "yes");
@@ -283,6 +298,9 @@ impl Config {
         }
         if let Some(x) = s("api_key") {
             self.api_key = x;
+        }
+        if let Some(x) = s("account_token") {
+            self.account_token = x;
         }
         if let Some(x) = s("mode") {
             if let Some(m) = PermissionMode::parse(&x) {
@@ -387,6 +405,12 @@ impl Config {
         root.insert("api".into(), Value::String(self.api.clone()));
         if include_secrets && !self.api_key.is_empty() {
             root.insert("api_key".into(), Value::String(self.api_key.clone()));
+        }
+        if include_secrets && !self.account_token.is_empty() {
+            root.insert(
+                "account_token".into(),
+                Value::String(self.account_token.clone()),
+            );
         }
         root.insert("mode".into(), Value::String(self.mode.as_str().into()));
         root.insert("max_turns".into(), json!(self.max_turns));

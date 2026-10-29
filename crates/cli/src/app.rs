@@ -249,31 +249,51 @@ impl App {
                     self.cfg.provider = p.id.into();
                     self.cfg.base_url = p.base_url.into();
                     self.cfg.api = p.api.as_str().into();
-                    if self.cfg.model.is_empty() {
-                        self.cfg.model = p.default_model().into();
-                        self.agent.set_model(&self.cfg.model);
-                    }
+                    self.cfg.model = p.default_model().into();
+                    self.rebuild_agent()?;
                     println!("provider: {} ({})", p.label, p.base_url);
-                    println!("use /auth to set the key, /model to pick a model");
+                    println!("use /login deepseek or /auth for an API key, then /model");
                 }
             }
             "auth" | "k" | "key" => {
-                let answer = self.ui.ask(&Question {
-                    id: "auth".into(),
-                    prompt: "API key".into(),
-                    kind: QuestionKind::Text { secret: true },
-                });
-                if let Answer::Text(key) = answer {
-                    let key = key.trim().to_string();
-                    if !key.is_empty() {
-                        self.cfg.api_key = key;
-                        self.rebuild_agent()?;
-                        println!(
-                            "key set for this session ({})",
-                            emerag_llm::redact(&self.cfg.api_key)
-                        );
+                let deepseek = self.cfg.provider.starts_with("deepseek")
+                    || self.cfg.base_url.contains("deepseek.com");
+                if deepseek {
+                    let options = [
+                        "Sign in with a DeepSeek account (OAuth, no key needed)",
+                        "Use a DeepSeek API key",
+                        "Cancel",
+                    ];
+                    match prompt::prompt_choice_caps(
+                        self.ui.caps,
+                        "DeepSeek authentication",
+                        &options,
+                        0,
+                    ) {
+                        Ok(0) => {
+                            crate::oauth::login_deepseek(&mut self.cfg, true)?;
+                            self.rebuild_agent()?;
+                            println!("signed in; use /model to pick a model");
+                        }
+                        Ok(1) => self.ask_api_key()?,
+                        _ => {}
                     }
+                } else {
+                    self.ask_api_key()?;
                 }
+            }
+            "login" | "signin" => {
+                if !rest.is_empty() && !rest.starts_with("deepseek") {
+                    println!("only 'deepseek' account login is supported: /login deepseek");
+                } else {
+                    crate::oauth::login_deepseek(&mut self.cfg, true)?;
+                    self.rebuild_agent()?;
+                    println!("signed in; use /model to pick a model");
+                }
+            }
+            "logout" | "signout" => {
+                crate::oauth::logout(&mut self.cfg)?;
+                self.rebuild_agent()?;
             }
             "wizard" | "w" | "setup" => {
                 crate::wizard::run(&mut self.cfg, &self.cli, &mut self.ui)?;
@@ -399,6 +419,27 @@ impl App {
         }
     }
 
+    fn ask_api_key(&mut self) -> Result<(), String> {
+        let answer = self.ui.ask(&Question {
+            id: "auth".into(),
+            prompt: "API key".into(),
+            kind: QuestionKind::Text { secret: true },
+        });
+        if let Answer::Text(key) = answer {
+            let key = key.trim().to_string();
+            if !key.is_empty() {
+                self.cfg.api_key = key;
+                self.cfg.provider = "deepseek".into();
+                self.rebuild_agent()?;
+                println!(
+                    "key set for this session ({})",
+                    emerag_llm::redact(&self.cfg.api_key)
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub fn rebuild_agent(&mut self) -> Result<(), String> {
         let provider =
             crate::providers::build(&self.cfg, &self.cli).map_err(|e| format!("provider: {e}"))?;
@@ -493,6 +534,7 @@ struct OneShotUi {
     usage: emerag_llm::Usage,
     stream: bool,
     printed: bool,
+    reasoning_open: bool,
 }
 
 impl OneShotUi {
@@ -501,6 +543,7 @@ impl OneShotUi {
             usage: emerag_llm::Usage::default(),
             stream,
             printed: false,
+            reasoning_open: false,
         }
     }
 }
@@ -509,25 +552,50 @@ impl Ui for OneShotUi {
     fn event(&mut self, ev: emerag_agent::UiEvent<'_>) {
         match ev {
             emerag_agent::UiEvent::Text(t) if self.stream => {
+                if self.reasoning_open {
+                    eprintln!();
+                    self.reasoning_open = false;
+                }
                 if !self.printed {
                     self.printed = true;
                 }
                 print!("{t}");
                 let _ = std::io::stdout().flush();
             }
+            emerag_agent::UiEvent::Reasoning(t) if self.stream => {
+                // Same reasoning visibility as the TUI, but on stderr so
+                // stdout stays a clean answer for pipes.
+                eprint!("{t}");
+                self.reasoning_open = true;
+                let _ = std::io::stderr().flush();
+            }
             emerag_agent::UiEvent::ToolStart { name, args_preview } => {
                 if self.stream {
+                    if self.reasoning_open {
+                        eprintln!();
+                        self.reasoning_open = false;
+                    }
                     eprintln!("[tool] {name}: {args_preview}");
                 }
             }
             emerag_agent::UiEvent::Assistant(t) => {
-                if self.stream && !t.is_empty() {
-                    println!();
+                if self.stream {
+                    if self.reasoning_open {
+                        eprintln!();
+                        self.reasoning_open = false;
+                    }
+                    if !t.is_empty() {
+                        println!();
+                    }
                 }
             }
             emerag_agent::UiEvent::Usage(u) => self.usage = u,
             emerag_agent::UiEvent::Notice(n) | emerag_agent::UiEvent::Status(n) => {
                 if self.stream {
+                    if self.reasoning_open {
+                        eprintln!();
+                        self.reasoning_open = false;
+                    }
                     eprintln!("[emerag] {n}");
                 }
             }

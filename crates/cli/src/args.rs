@@ -15,6 +15,7 @@ pub enum Action {
     Models,
     Local(String),
     McpServer,
+    Login(String),
     Version,
     Help,
     Prompt(String),
@@ -32,6 +33,7 @@ pub struct Cli {
     pub no_write: bool,
     pub mode: Option<String>,
     pub resolve: Vec<String>,
+    pub dns: Vec<String>,
     pub ip: Option<String>,
     pub insecure: bool,
     pub cacert: Option<String>,
@@ -67,6 +69,7 @@ impl Default for Cli {
             no_write: false,
             mode: None,
             resolve: Vec::new(),
+            dns: Vec::new(),
             ip: None,
             insecure: false,
             cacert: None,
@@ -106,10 +109,12 @@ MODES
   --keys                 print the key card
   --guide                offline interactive tutorial
   --models               list models for the current provider
+  --login deepseek       sign in with a DeepSeek account (OAuth, no key)
   --version, --help
 
 SUBCOMMANDS
   emerag local ACTION    status | up | stop | models
+  emerag login deepseek  sign in with a DeepSeek account
 
 MODEL
   --provider ID          provider profile (deepseek, openai, anthropic, ...)
@@ -121,6 +126,7 @@ MODEL
 
 NETWORK (broken DNS friendly)
   --resolve SPEC         host:port:ip (repeatable, curl style)
+  --dns IP               nameserver to use before the system resolver (repeatable)
   --ip ADDR              shortcut: pin the endpoint to this IP
   --cacert PATH          extra CA bundle (PEM)
   --insecure             skip TLS verification (dangerous)
@@ -168,6 +174,13 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
         let sub = args.get(1).cloned().unwrap_or_else(|| "status".to_string());
         args.drain(0..2.min(args.len()));
         cli.action = Action::Local(sub);
+    } else if args.first().map(|a| a == "login").unwrap_or(false) {
+        let provider = args
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| "deepseek".to_string());
+        args.drain(0..2.min(args.len()));
+        cli.action = Action::Login(provider);
     }
     let mut it = args.into_iter().peekable();
     let mut prompt_words: Vec<String> = Vec::new();
@@ -210,6 +223,16 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
             "--guide" => cli.action = Action::Guide,
             "--models" => cli.action = Action::Models,
             "--mcp-server" => cli.action = Action::McpServer,
+            "--login" => {
+                let provider = match inline.clone() {
+                    Some(v) => v,
+                    None => match it.peek() {
+                        Some(next) if !next.starts_with('-') => it.next().unwrap(),
+                        _ => "deepseek".to_string(),
+                    },
+                };
+                cli.action = Action::Login(provider);
+            }
             "--local" => cli.action = Action::Local(value("--local")?),
             "-p" | "--prompt" => explicit_prompt = Some(value("--prompt")?),
             "--provider" => cli.provider = Some(value("--provider")?),
@@ -221,6 +244,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
             "--no-write" => cli.no_write = true,
             "--mode" => cli.mode = Some(value("--mode")?),
             "--resolve" => cli.resolve.push(value("--resolve")?),
+            "--dns" => cli.dns.push(value("--dns")?),
             "--ip" => cli.ip = Some(value("--ip")?),
             "--insecure" => cli.insecure = true,
             "--cacert" => cli.cacert = Some(value("--cacert")?),

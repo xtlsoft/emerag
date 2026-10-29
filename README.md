@@ -16,14 +16,14 @@ That is the whole installation.
 
 | property | value (Linux x86_64, release build) |
 | --- | --- |
-| binary size | **1.70 MiB** (1.79 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
+| binary size | **1.78 MiB** (1.87 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
 | resident memory | **3.2 MB** (3.1 MiB) maximum RSS for a full one-shot tool-using session |
 | dependencies | **zero** Rust crates, zero shared libraries |
-| tests | 467 unit/integration tests + 10 end-to-end scenarios |
+| tests | 476 unit/integration tests + 10 end-to-end scenarios |
 | startup | milliseconds; no config file required |
 
-Other targets: aarch64 1.44 MiB, armv7 1.40 MiB, riscv64 1.40 MiB,
-i686 1.55 MiB, Windows x64 1.44 MiB, Windows x86 1.40 MiB, s390x 1.70 MiB. See
+Other targets: aarch64 1.50 MiB, armv7 1.46 MiB, riscv64 1.46 MiB,
+i686 1.61 MiB, Windows x64 1.50 MiB, Windows x86 1.45 MiB, s390x 1.78 MiB. See
 [docs/COMPAT.md](docs/COMPAT.md).
 
 ## Why
@@ -37,13 +37,22 @@ when you need help most. emerag makes the opposite trade:
 - **Zero third-party crates.** The whole agent is Rust plus std, with
   hand-written TLS, HTTP, JSON, crypto, X.509 and a Lua-subset interpreter.
   Builds work offline and cross-compile to unusual targets.
-- **Small.** 1.4-1.7 MiB on disk; 3.2 MB RSS in normal use; no background
+- **Small.** 1.5-1.8 MiB on disk; 3.2 MB RSS in normal use; no background
   threads when idle; no model weights in the agent process.
 - **Terminal-first.** VT100, serial consoles, 40-column windows, legacy
   Windows consoles, no Unicode, no color, no arrow keys: all supported.
 - **Broken-network aware.** DNS is optional: pin any endpoint with
-  --resolve host:443:IP or --ip. Certificates still verify against the
-  hostname, and a Mozilla-derived root bundle is embedded.
+  --resolve host:443:IP or --ip, or supply a nameserver with --dns. On
+  Android/Termux, where a static binary cannot see the platform resolver,
+  emerag discovers nameservers or falls back to public DNS automatically.
+  Certificates still verify against the hostname, and a Mozilla-derived root
+  bundle is embedded.
+- **DeepSeek account sign-in.** A DeepSeek account can be used through the
+  browser OAuth flow (PKCE, loopback callback), with no API key. Model names
+  come from the account's /models endpoint, and the grant is sent as
+  x-dsh-auth-token.
+- **Live, not stuck.** Reasoning traces stream while the model thinks, each
+  request shows a waiting status, and tool calls report their duration.
 - **Broken-shell aware.** bash, zsh, fish, sh, cmd, PowerShell, Python and PHP
   are supported; when none works, the built-in script engine exposes
   filesystem, process, environment, hash and JSON primitives.
@@ -54,6 +63,7 @@ when you need help most. emerag makes the opposite trade:
 ## Quick start
 
     emerag --wizard        # choose provider, endpoint, key, model (numbered menu)
+    emerag login deepseek  # browser sign-in with a DeepSeek account (no key)
     emerag                 # interactive session
     emerag "fix the nginx config"        # one-shot turn
     emerag --doctor        # terminal, shells, TLS, DNS, disk diagnosis
@@ -73,12 +83,12 @@ For scripts and automation:
 | area | status |
 | --- | --- |
 | Chat Completions, Responses, Anthropic Messages | working, streaming, tool calls, usage, reasoning |
-| DeepSeek, OpenAI, Anthropic, OpenCode Console/Go, custom, local | embedded catalog, model discovery, key handling |
+| DeepSeek account (OAuth), DeepSeek/OpenAI/Anthropic keys, OpenCode, custom, local | browser sign-in, embedded catalog, /models discovery, key handling |
 | agent loop | tools, approvals, retries, cancellation, compaction, transcripts (JSONL) |
 | tools | shell (8 shells), read/write/edit/list/glob/grep, script, ask-user, subagents, background jobs, elevation |
 | skills (SKILL.md) and MCP client (stdio) | working |
 | TUI / serial / dumb terminals | working, ASCII fallback, cooked-mode fallback |
-| providers without DNS | --resolve / --ip, embedded CA, --cacert |
+| providers without DNS | --resolve / --ip / --dns, Android fallback, embedded CA, --cacert |
 | local models | external ollama/llama.cpp/LM Studio; self-extracting offline bundle |
 | cross builds | Linux musl x86_64/i686/aarch64/armv7/riscv64, Windows x64/x86, s390x (glibc) |
 

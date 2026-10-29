@@ -335,7 +335,6 @@ pub fn hostname() -> String {
     use core::ffi::c_void;
     extern "system" {
         fn GetComputerNameW(buf: *mut u16, len: *mut u32) -> i32;
-        fn GetUserNameW(buf: *mut u16, len: *mut u32) -> i32;
         fn CloseHandle(h: *mut c_void) -> i32;
     }
     let _ = CloseHandle;

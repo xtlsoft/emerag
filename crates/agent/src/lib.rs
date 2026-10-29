@@ -5,6 +5,7 @@
 
 pub mod error;
 pub mod permissions;
+pub mod probe;
 pub mod prompt;
 pub mod session;
 pub mod skills;
@@ -86,6 +87,7 @@ pub enum UiEvent<'a> {
         name: &'a str,
         ok: bool,
         summary: String,
+        duration_ms: u64,
     },
     Notice(String),
     Status(String),
@@ -276,6 +278,7 @@ pub struct Agent {
     provider: Arc<dyn Provider>,
     transcript: Transcript,
     depth: u8,
+    env_summary: String,
     /// Shared cancellation flag; the terminal layer holds a clone.
     pub cancel: emerag_util::sync::CancelToken,
 }
@@ -287,6 +290,7 @@ impl Agent {
         mcp_servers: &[ServerConfig],
     ) -> Result<Self> {
         let shell = tools::shell::detect(config.shell.as_deref());
+        let env_summary = probe::summary(&config.cwd, &shell.label());
         let mut skill_dirs = skills::default_dirs(&config.cwd, &config.skill_dirs);
         skill_dirs.dedup();
         let skills = SkillRegistry::discover(skill_dirs);
@@ -305,6 +309,7 @@ impl Agent {
             provider,
             transcript,
             depth: 0,
+            env_summary,
             cancel: emerag_util::sync::CancelToken::new(),
         })
     }
@@ -351,6 +356,7 @@ impl Agent {
             extra: &self.config.system_extra,
             model: &self.config.model,
             is_subagent: self.depth > 0,
+            env: &self.env_summary,
         };
         prompt::build(&ctx)
     }
@@ -385,7 +391,16 @@ impl Agent {
             req.temperature = self.config.temperature;
             req.max_output_tokens = self.config.max_output_tokens;
 
+            let started = std::time::Instant::now();
+            ui.event(UiEvent::Status(format!(
+                "waiting for {} ...",
+                self.config.model
+            )));
             let response = self.stream_with_retry(&req, ui)?;
+            ui.event(UiEvent::Status(format!(
+                "model replied in {}",
+                emerag_util::time::fmt_duration_ms(started.elapsed().as_millis() as u64)
+            )));
             if self.cancelled(ui) {
                 out.cancelled = true;
                 break;
@@ -419,6 +434,7 @@ impl Agent {
                     out.cancelled = true;
                     break;
                 }
+                let tool_started = std::time::Instant::now();
                 let result_text = self.execute_tool(&call.name, &call.arguments, &call.id, ui);
                 let (text, ok) = match result_text {
                     Ok(t) => (t, true),
@@ -431,6 +447,7 @@ impl Agent {
                     name: &call.name,
                     ok,
                     summary: tool_summary(&tool_msg.content),
+                    duration_ms: tool_started.elapsed().as_millis() as u64,
                 });
             }
             if out.cancelled {

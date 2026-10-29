@@ -9,3 +9,4 @@ description = "LLM provider abstraction: Chat Completions, Responses, Anthropic 
 emerag-util = { workspace = true }
 emerag-json = { workspace = true }
 emerag-http = { workspace = true }
+emerag-crypto = { workspace = true }

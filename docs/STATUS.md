@@ -7,11 +7,16 @@ nobody has to reverse-engineer a claim from the README.
 ## Finished and tested
 
 - **Transport**: HTTP/1.1 client, TLS 1.2 + 1.3 (AES-GCM, ChaCha20, X25519,
-  P-256), embedded CA store, SPKI pinning, DNS overrides, HTTP proxies,
+  P-256), embedded CA store, SPKI pinning, DNS overrides, an internal UDP
+  resolver for hosts without /etc/resolv.conf (Android/Termux), HTTP proxies,
   redirects, SSE, cancellation, retryable timeouts.
-- **Providers**: Chat Completions, Responses, Anthropic Messages, DeepSeek,
-  OpenAI, OpenCode Console/Go, ollama/llama.cpp/LM Studio, custom endpoints.
-  Streaming tool calls and reasoning fields are normalized.
+- **Providers**: Chat Completions, Responses, Anthropic Messages, DeepSeek
+  API keys, DeepSeek account OAuth (PKCE browser login, x-dsh-auth-token,
+  /models discovery), OpenAI, OpenCode Console/Go, ollama/llama.cpp/LM Studio,
+  custom endpoints. Streaming tool calls and reasoning fields are normalized.
+- **Liveness**: reasoning traces stream by default, waiting/status lines and
+  tool durations are shown, and the system prompt carries a measured
+  environment probe (OS, shells, tools, DNS, writability, memory).
 - **Agent**: tool loop, per-call approvals, four permission modes, subagents,
   background jobs, compaction, JSONL transcripts, usage accounting.
 - **Tools**: shell (bash/zsh/fish/sh/cmd/pwsh/python/php), file read/write/edit,
@@ -22,13 +27,22 @@ nobody has to reverse-engineer a claim from the README.
 - **MCP**: stdio client (initialize, tools/list, tools/call), namespaced tools,
   timeouts, stderr diagnostics.
 - **Interfaces**: interactive TUI, Ctrl+X chords, slash commands, cooked-mode
-  and ASCII fallbacks, one-shot, JSON output, wizard, doctor, guide, key card.
+  and ASCII fallbacks, one-shot, JSON output, automatic first-run wizard,
+  DeepSeek account login/logout, doctor, guide, key card.
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
 - **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,
   local up/status/stop/models, packaging script.
 
 ## Experimental
+
+- **DeepSeek account end-to-end**: `auth_init` is verified live against
+  platform.deepseek.com and the invalid-grant shape on both chat and messages
+  routes is verified, but a real grant could not be completed here (no
+  account). Inference uses the OpenAI-compatible route so reasoning_content is
+  replayed; confirm on first real login.
+- **Termux on a physical device**: the empty-resolv.conf failure and the
+  --dns fallback were reproduced in WSL, not on Android hardware.
 
 - **Windows 7**: scripts/build-legacy-win.sh builds with Rust 1.77.2, the last
   toolchain supporting Windows 7. It was not verifiable in this environment

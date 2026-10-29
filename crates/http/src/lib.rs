@@ -19,6 +19,7 @@
 
 pub mod client;
 mod conn;
+pub mod dns;
 pub mod error;
 pub mod proxy;
 pub mod resolve;

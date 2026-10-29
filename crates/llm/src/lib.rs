@@ -11,6 +11,7 @@
 
 pub mod catalog;
 pub mod client;
+pub mod deepseek_auth;
 pub mod types;
 
 pub use catalog::{Profile, Quirk};
@@ -70,11 +71,28 @@ impl Error {
 
     /// Short hint for the UI, e.g. what the user should do next.
     pub fn hint(&self) -> &'static str {
+        let m = self.message.to_ascii_lowercase();
+        if m.contains("not signed in") || m.contains("dsh token") {
+            return "the DeepSeek account grant was rejected; run /login deepseek";
+        }
+        if m.contains("certificate")
+            || m.contains("no trusted root")
+            || m.contains("handshake")
+            || m.contains("tls:")
+        {
+            return "TLS failed: check the system clock, --cacert, or the endpoint hostname";
+        }
+        if m.contains("dns") || m.contains("resolve") || m.contains("lookup") {
+            return "DNS failed: use --dns <ip>, --resolve host:443:IP or --ip <ip>";
+        }
+        if m.contains("connect") || m.contains("timed out") || m.contains("timeout") {
+            return "cannot reach the endpoint: check host/port, proxy, firewall or DNS";
+        }
         match self.kind {
             ErrorKind::Auth => "check the API key (/auth) or provider settings",
             ErrorKind::RateLimit => "rate limited: wait a moment or switch models (/model)",
             ErrorKind::Network => {
-                "check DNS, endpoint, proxy; use --resolve host:443:IP if DNS is broken"
+                "check DNS, endpoint, proxy; use --resolve host:443:IP or --dns <ip> if DNS is broken"
             }
             ErrorKind::BadRequest => "the request was rejected; try /compact or a different model",
             ErrorKind::Server => "provider error; retry or switch models",
@@ -117,6 +135,8 @@ impl From<emerag_http::Error> for Error {
 #[derive(Clone)]
 pub struct Credentials {
     pub api_key: String,
+    /// DeepSeek account grant (x-dsh-auth-token), when signed in.
+    pub account_token: Option<String>,
     pub extra_headers: Vec<(String, String)>,
 }
 
@@ -124,6 +144,7 @@ impl Credentials {
     pub fn none() -> Self {
         Credentials {
             api_key: String::new(),
+            account_token: None,
             extra_headers: Vec::new(),
         }
     }
@@ -131,16 +152,27 @@ impl Credentials {
     pub fn key(key: impl Into<String>) -> Self {
         Credentials {
             api_key: key.into(),
+            account_token: None,
+            extra_headers: Vec::new(),
+        }
+    }
+
+    pub fn account(token: impl Into<String>) -> Self {
+        Credentials {
+            api_key: String::new(),
+            account_token: Some(token.into()),
             extra_headers: Vec::new(),
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.api_key.is_empty() && self.extra_headers.is_empty()
+        self.api_key.is_empty() && self.account_token.is_none() && self.extra_headers.is_empty()
     }
 
     pub fn redacted(&self) -> String {
-        if self.api_key.is_empty() {
+        if let Some(t) = &self.account_token {
+            format!("account {}", redact(t))
+        } else if self.api_key.is_empty() {
             "(none)".to_string()
         } else {
             redact(&self.api_key)
@@ -179,6 +211,9 @@ pub struct ClientConfig {
     pub resolve: emerag_http::ResolveTable,
     pub tls: emerag_http::TlsOptions,
     pub proxy: Option<emerag_http::ProxyConfig>,
+    /// Extra nameservers for systems without a usable resolver (Termux).
+    pub dns_servers: Vec<std::net::IpAddr>,
+    pub dns_first: bool,
 }
 
 impl ClientConfig {
@@ -198,6 +233,8 @@ impl ClientConfig {
             resolve: emerag_http::ResolveTable::new(),
             tls: emerag_http::TlsOptions::new(),
             proxy: None,
+            dns_servers: Vec::new(),
+            dns_first: false,
         }
     }
 

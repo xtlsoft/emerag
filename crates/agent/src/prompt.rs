@@ -15,6 +15,7 @@ pub struct PromptContext<'a> {
     pub extra: &'a str,
     pub model: &'a str,
     pub is_subagent: bool,
+    pub env: &'a str,
 }
 
 pub fn build(ctx: &PromptContext<'_>) -> String {
@@ -22,17 +23,14 @@ pub fn build(ctx: &PromptContext<'_>) -> String {
     s.push_str(
         "You are emerag, a small, precise coding agent that runs on broken or unusual systems.\n         You operate a real machine through tools: commands, file edits and a built-in script engine.\n         Act, do not lecture. Inspect before you change. Prefer the smallest fix that works.\n",
     );
+    s.push_str("\nEnvironment probe (measured just now):\n");
+    s.push_str(ctx.env);
     s.push_str(&format!(
-        "\nEnvironment: {} {} | shell: {} | cwd: {} | user: {} | host: {} | mode: {}\n",
-        sys::os_name(),
-        sys::arch(),
-        ctx.shell,
-        ctx.cwd.display(),
-        sys::username(),
+        "\nHost: {} | mode: {} | model: {}\n",
         sys::hostname(),
-        ctx.mode
+        ctx.mode,
+        ctx.model
     ));
-    s.push_str(&format!("Model: {}\n", ctx.model));
 
     s.push_str(
         "\nWorking rules:\n         - Explain only what matters; the user may be on a 40-column serial console. Keep lines short and avoid tables.\n         - Before destructive or privileged actions, say what you are about to do. In ask mode the user sees an approval prompt.\n         - If a command fails, read the error and adapt instead of repeating it.\n         - Prefer read/list/glob/grep before editing. Use edit_file for small changes and write_file for new files.\n         - When shells are missing or broken, use the script tool: it exposes fs/env/proc/time/json/hash without a shell.\n         - Never print or request secrets. API keys are configured outside this conversation.\n         - If the network or DNS is broken, say so and suggest a resolve override instead of retrying blindly.\n         - Use jobs for long-running commands and poll with job_output instead of blocking.\n         - Use the task tool for self-contained side work; keep the main context focused.\n",
@@ -87,6 +85,7 @@ mod tests {
             extra: "be terse",
             model: "test-model",
             is_subagent: false,
+            env: "OS: test\nCwd: /tmp (writable: yes)",
         };
         let p = build(&ctx);
         assert!(p.contains("emerag"));

@@ -24,10 +24,14 @@ pub struct TermUi {
     pub color: bool,
     pub ascii: bool,
     pub width: usize,
+    /// Kept for callers that tune diagnostics; reasoning is always shown.
+    #[allow(dead_code)]
     pub verbose: bool,
     pub token: emerag_util::sync::CancelToken,
     editor: LineEditor,
     pending: String,
+    reasoning_pending: String,
+    reasoning_header: bool,
     last_usage: Option<Usage>,
     at_line_start: bool,
 }
@@ -57,6 +61,8 @@ impl TermUi {
             token,
             editor,
             pending: String::new(),
+            reasoning_pending: String::new(),
+            reasoning_header: false,
             last_usage: None,
             at_line_start: true,
         }
@@ -132,7 +138,45 @@ impl TermUi {
         self.at_line_start = self.pending.is_empty();
     }
 
+    fn stream_reasoning(&mut self, delta: &str) {
+        if !self.reasoning_header {
+            self.println(&self.paint("2", &format!("{} thinking", self.mark("dot"))));
+            self.reasoning_header = true;
+        }
+        self.reasoning_pending.push_str(delta);
+        let avail = self.width.saturating_sub(4).max(12);
+        while let Some(idx) = self.reasoning_pending.find('\n') {
+            let line: String = self.reasoning_pending.drain(..=idx).collect();
+            self.print_reasoning_line(line.trim_end_matches(['\n', '\r']));
+        }
+        if text::width(&self.reasoning_pending) >= avail {
+            let lines = text::wrap(&self.reasoning_pending, avail);
+            if lines.len() > 1 {
+                let last = lines.last().cloned().unwrap_or_default();
+                for l in &lines[..lines.len() - 1] {
+                    self.print_reasoning_line(l);
+                }
+                self.reasoning_pending = last;
+            }
+        }
+    }
+
+    fn print_reasoning_line(&mut self, line: &str) {
+        let clean = text::sanitize(line);
+        let styled = self.paint("2", &format!("  {clean}"));
+        self.println(&styled);
+    }
+
+    fn flush_reasoning(&mut self) {
+        if !self.reasoning_pending.is_empty() {
+            let line = std::mem::take(&mut self.reasoning_pending);
+            self.print_reasoning_line(&line);
+        }
+        self.reasoning_header = false;
+    }
+
     fn flush_pending(&mut self) {
+        self.flush_reasoning();
         if !self.pending.is_empty() {
             let line = std::mem::take(&mut self.pending);
             let clean = text::sanitize(&line);
@@ -265,13 +309,11 @@ impl Ui for TermUi {
             self.token.cancel();
         }
         match ev {
-            UiEvent::Text(t) => self.stream_text(t),
-            UiEvent::Reasoning(t) => {
-                if self.verbose {
-                    let line = format!("{} {}", self.mark("dot"), text::single_line(t));
-                    self.println(&self.paint("2", &line));
-                }
+            UiEvent::Text(t) => {
+                self.flush_reasoning();
+                self.stream_text(t);
             }
+            UiEvent::Reasoning(t) => self.stream_reasoning(t),
             UiEvent::ToolStart { name, args_preview } => {
                 self.flush_pending();
                 let line = format!("{} {}: {}", self.mark("tool"), name, args_preview);
@@ -281,6 +323,7 @@ impl Ui for TermUi {
                 name: _,
                 ok,
                 summary,
+                duration_ms,
             } => {
                 self.flush_pending();
                 let mark = if ok {
@@ -288,7 +331,12 @@ impl Ui for TermUi {
                 } else {
                     self.mark("fail")
                 };
-                let line = format!("  {mark} {summary}");
+                let took = if duration_ms >= 100 {
+                    format!(" ({})", emerag_util::time::fmt_duration_ms(duration_ms))
+                } else {
+                    String::new()
+                };
+                let line = format!("  {mark} {summary}{took}");
                 let color = if ok { "32" } else { "31" };
                 self.println(&self.paint(color, &line));
             }

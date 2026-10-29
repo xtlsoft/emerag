@@ -25,18 +25,35 @@ Check it runs:
 
 Answer with digits and Enter. You need:
 
-    - provider: pick a number (DeepSeek is 1)
+    - provider: pick a number (DeepSeek API key is 1,
+                DeepSeek account sign-in is 2)
     - endpoint: press Enter for the default
     - API key:  paste or type it (it is not echoed twice;
                 Ctrl+C cancels, nothing is saved unless you say so)
+                For the account option, a browser sign-in replaces the key.
     - model:    pick from the discovered list, or type a name
     - save:     y = write config, n = memory only
+
+### DeepSeek account instead of an API key
+
+    ./emerag login deepseek
+
+emerag opens a browser (or prints a URL) and listens on 127.0.0.1 for the
+callback. On a phone, open the printed URL in the phone's browser; the
+loopback callback reaches the terminal directly. The token is stored in the
+config file (0600), and model names are fetched from /models.
 
 If DNS is broken, the wizard asks whether to pin an IP:
 
     endpoint: https://api.deepseek.com/v1
     DNS broken? [y/N]: y
     IP address: 1.2.3.4
+
+On Termux/Android, a static binary often cannot use the system resolver even
+when the phone's DNS works. emerag tries the platform nameservers and a public
+fallback automatically; to force one:
+
+    ./emerag --dns 1.1.1.1 --doctor
 
 Non-interactive equivalent:
 
