@@ -223,6 +223,7 @@ OPTIONS\n\
   --max-turns N        tool loop limit (default {DEFAULT_MAX_TURNS})\n\
   --system TEXT        extra system instruction\n\
   --dns IP             nameserver fallback (repeatable)\n\
+  --resolve H:P:IP     pin a host to an address (repeatable)\n\
   --cacert PATH        extra CA bundle\n\
   --insecure           disable TLS verification (dangerous)\n\
   --config PATH        read base/model/key from a JSON config\n\
