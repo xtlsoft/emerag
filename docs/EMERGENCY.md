@@ -74,7 +74,7 @@ Two options:
 
 1. Point emerag at a model server that is already on the LAN:
 
-       ./emerag --base-url http://192.168.1.50:8080/v1 --model local-model
+       ./emerag --base-url http://192.168.1.50:9931/v1 --model local-model
 
 2. Use the offline release with embedded weights:
 

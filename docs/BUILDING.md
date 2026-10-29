@@ -71,7 +71,7 @@ Windows 7. This is how the compatibility matrix in COMPAT.md is produced.
 
     cargo test --workspace
 
-422 unit and integration tests as of this writing, including:
+467 unit and integration tests as of this writing, including:
 
 - cryptographic test vectors (NIST/RFC/Wycheproof-style negatives),
 - X.509 chain validation against real captured chains,

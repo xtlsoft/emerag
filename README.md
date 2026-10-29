@@ -19,7 +19,7 @@ That is the whole installation.
 | binary size | **1.70 MiB** (1.79 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
 | resident memory | **3.2 MB** (3.1 MiB) maximum RSS for a full one-shot tool-using session |
 | dependencies | **zero** Rust crates, zero shared libraries |
-| tests | 468 unit/integration tests + 8 end-to-end scenarios |
+| tests | 467 unit/integration tests + 8 end-to-end scenarios |
 | startup | milliseconds; no config file required |
 
 Other targets: aarch64 1.44 MiB, armv7 1.40 MiB, riscv64 1.40 MiB,

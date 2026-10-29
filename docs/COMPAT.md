@@ -46,6 +46,10 @@ Nothing in the code requires PIE.
 
 ## Windows
 
+The x86_64 binary was smoke-tested under Wine 9.0 (--version, --keys,
+--doctor): it starts, detects cmd/PowerShell, and resolves Windows config
+paths. It has not been executed on a real Windows installation.
+
 | target | size | imports | minimum OS |
 | --- | --- | --- | --- |
 | x86_64-pc-windows-gnu | 1.44 MiB | KERNEL32, msvcrt, ntdll, WS2_32, api-ms-win-core-synch-l1-2-0 | Windows 8 (see below) |
