@@ -334,6 +334,69 @@ impl App {
         }
     }
 
+    fn delete_session(&mut self, arg: &str) -> Result<(), String> {
+        let idx = self
+            .session_index(arg)
+            .ok_or_else(|| format!("no session '{arg}' (use /sessions)"))?;
+        if self.sessions[idx].busy.is_some() {
+            return Err(format!(
+                "session '{}' is busy; /kill it or /wait before deleting",
+                self.sessions[idx].name
+            ));
+        }
+        if self
+            .background
+            .iter()
+            .any(|b| b.session_index == idx && !b.done)
+        {
+            return Err(format!(
+                "session '{}' has a running background turn; /kill it first",
+                self.sessions[idx].name
+            ));
+        }
+
+        self.sync_active_session();
+        let was_active = idx == self.active_session;
+        let name = self.sessions[idx].name.clone();
+
+        // A finished background handle must not keep pointing at the removed
+        // index, and later handles must shift with the vector.
+        self.background.retain(|b| b.session_index != idx);
+        for b in &mut self.background {
+            if b.session_index > idx {
+                b.session_index -= 1;
+            }
+        }
+
+        self.sessions.remove(idx);
+        if self.sessions.is_empty() {
+            let model = self.cfg.model.clone();
+            self.sessions.push(crate::sessions::ChatSession::new(
+                "session-1",
+                model.clone(),
+                emerag_agent::session::Session::new(),
+            ));
+            self.active_session = 0;
+            self.agent.clear_session();
+            self.agent.set_model(model.clone());
+            self.cfg.model = model;
+        } else if was_active {
+            let next = idx.min(self.sessions.len() - 1);
+            self.active_session = next;
+            let s = &self.sessions[next];
+            self.agent.set_session(s.session.clone());
+            self.agent.set_model(s.model.clone());
+            self.cfg.model = s.model.clone();
+        } else if idx < self.active_session {
+            self.active_session -= 1;
+        }
+
+        self.persist_sessions();
+        println!("deleted session: {name}");
+        self.list_sessions();
+        Ok(())
+    }
+
     fn new_session(&mut self, name: &str) -> Result<(), String> {
         self.sync_active_session();
         let name = if name.trim().is_empty() {
@@ -615,10 +678,29 @@ impl App {
             "session" | "sessions" => {
                 if rest.is_empty() {
                     self.list_sessions();
+                } else if let Some(arg) = rest
+                    .strip_prefix("delete ")
+                    .or_else(|| rest.strip_prefix("del "))
+                    .or_else(|| rest.strip_prefix("rm "))
+                {
+                    if arg.trim().is_empty() {
+                        println!("usage: /session delete <number|name>");
+                    } else {
+                        self.delete_session(arg.trim())?;
+                    }
+                } else if matches!(rest, "delete" | "del" | "rm") {
+                    println!("usage: /session delete <number|name>");
                 } else if let Some(idx) = self.session_index(rest) {
                     self.activate_session(idx)?;
                 } else {
                     println!("unknown session '{rest}' (use /sessions)");
+                }
+            }
+            "delete" | "del" | "rm" => {
+                if rest.is_empty() {
+                    println!("usage: /delete <number|name>");
+                } else {
+                    self.delete_session(rest)?;
                 }
             }
             "fork" => {

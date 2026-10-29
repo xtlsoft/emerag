@@ -860,22 +860,44 @@ impl Agent {
 
     fn run_elevated(&mut self, command: &str, reason: &str, ui: &mut dyn Ui) -> Result<String> {
         let cwd = self.config.cwd.clone();
-        // Step 1: passwordless sudo/doas (containers, NOPASSWD setups).
-        for program in ["sudo", "doas"] {
-            if emerag_util::sys::which(program).is_none() {
-                continue;
+        let quoted = emerag_util::sys::shell_quote(command);
+        let has_sudo = emerag_util::sys::which("sudo").is_some();
+        let has_doas = emerag_util::sys::which("doas").is_some();
+
+        // First, check whether sudo already has a valid timestamp. This is the
+        // normal passwordless case (NOPASSWD or a recent sudo -v). It must not
+        // run the requested command: a failing command is not an auth failure,
+        // and running it twice would be a serious surprise.
+        if has_sudo {
+            let probe = tools::shell::run(
+                &self.shell,
+                "sudo -n -v",
+                &cwd,
+                self.config.command_timeout,
+                &[],
+                4096,
+                &self.cancel,
+            )?;
+            if probe.code == Some(0) {
+                let result = tools::shell::run(
+                    &self.shell,
+                    &format!("sudo -n -- sh -c {quoted}"),
+                    &cwd,
+                    self.config.command_timeout,
+                    &[],
+                    self.config.max_tool_output * 2,
+                    &self.cancel,
+                )?;
+                return Self::elevated_result("sudo", reason, result, self.config.max_tool_output);
             }
-            let argv = if program == "sudo" {
-                format!(
-                    "sudo -n -- sh -c {}",
-                    emerag_util::sys::shell_quote(command)
-                )
-            } else {
-                format!("doas sh -c {}", emerag_util::sys::shell_quote(command))
-            };
+        }
+
+        // doas has no portable stdin-password mode. Only use its noninteractive
+        // form; never let it grab the TUI's terminal for a password prompt.
+        if !has_sudo && has_doas {
             let result = tools::shell::run(
                 &self.shell,
-                &argv,
+                &format!("doas -n sh -c {quoted}"),
                 &cwd,
                 self.config.command_timeout,
                 &[],
@@ -883,58 +905,86 @@ impl Agent {
                 &self.cancel,
             )?;
             if result.code == Some(0) {
-                return Ok(format!(
-                    "[elevated via {program} -n{}{}]\n{}",
-                    if reason.is_empty() { "" } else { ": " },
-                    reason,
-                    result.for_model(self.config.max_tool_output)
-                ));
+                return Self::elevated_result("doas", reason, result, self.config.max_tool_output);
             }
         }
-        // Step 2: interactive sudo password over the TTY.
-        if emerag_util::sys::which("sudo").is_none() {
-            return Err(AgentError::new(
-                "no sudo/doas available; cannot elevate on this system",
-            ));
+
+        if !has_sudo {
+            return Err(AgentError::new(if has_doas {
+                "doas needs a password but has no stdin mode; no sudo available to elevate"
+            } else {
+                "no sudo/doas available; cannot elevate on this system"
+            }));
         }
+
+        // Ask for the password only when sudo itself says the cached credential
+        // is not valid. Validate it with sudo -v, then run the command exactly
+        // once with sudo -n.
         let answer = ui.ask(&Question {
             id: format!("sudopw-{}", emerag_util::sync::next_id()),
-            prompt: format!("sudo password for: {command}"),
+            prompt: "sudo password".to_string(),
             kind: QuestionKind::Text { secret: true },
         });
         let password = match answer {
             Answer::Text(t) => t,
             _ => return Err(AgentError::new("elevation cancelled")),
         };
-        let result = tools::shell::run_with_input(
+        let validate = tools::shell::run_with_input(
             &self.shell,
-            &format!(
-                "sudo -S -p '' -- sh -c {}",
-                emerag_util::sys::shell_quote(command)
+            "sudo -S -p '' -v",
+            &cwd,
+            self.config.command_timeout,
+            &[],
+            4096,
+            &self.cancel,
+            Some(
+                format!(
+                    "{password}
+"
+                )
+                .into_bytes(),
             ),
+        )?;
+        if validate.code != Some(0) {
+            return Err(AgentError::new(format!(
+                "sudo authentication failed: {}",
+                emerag_util::text::truncate(&validate.stderr, 300)
+            )));
+        }
+        let result = tools::shell::run(
+            &self.shell,
+            &format!("sudo -n -- sh -c {quoted}"),
             &cwd,
             self.config.command_timeout,
             &[],
             self.config.max_tool_output * 2,
             &self.cancel,
-            Some(format!("{password}\n").into_bytes()),
         )?;
+        Self::elevated_result("sudo", reason, result, self.config.max_tool_output)
+    }
+
+    fn elevated_result(
+        program: &str,
+        reason: &str,
+        result: tools::shell::CommandResult,
+        max_output: usize,
+    ) -> Result<String> {
         if result.code == Some(0) {
             Ok(format!(
-                "[elevated via sudo]{}{}\n{}",
+                "[elevated via {program}]{}{}
+{}",
                 if reason.is_empty() { "" } else { ": " },
                 reason,
-                result.for_model(self.config.max_tool_output)
+                result.for_model(max_output)
             ))
         } else {
             Err(AgentError::new(format!(
-                "sudo failed (exit {:?}); output: {}",
+                "{program} command failed (exit {:?}); output: {}",
                 result.code,
                 emerag_util::text::truncate(&result.stderr, 500)
             )))
         }
     }
-
     fn run_subagent(
         &mut self,
         description: &str,

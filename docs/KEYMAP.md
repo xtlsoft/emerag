@@ -16,6 +16,7 @@ Type at the prompt. Prefix matching is supported: `/m` means `/model`.
     /logout         remove the stored DeepSeek account grant
     /new [name]     new conversation (memory with --no-write)
     /session [N]    list or switch conversations
+    /session delete N|name   delete a conversation (also /delete)
     /fork [name]    copy this conversation into a new one
     /bg PROMPT      run a turn in the background (prompt ending in " &" too)
     /wait [ID]      wait for background output and approvals

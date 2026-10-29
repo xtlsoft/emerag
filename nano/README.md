@@ -40,6 +40,20 @@ The controller prints the command, runs it, and sends the output back. This
 is prompt-based, not OpenAI tool JSON. Use --ask to confirm each command or
 --no-shell to disable execution.
 
+Interactive commands:
+
+    /help                         list commands
+    /compact                      drop oldest messages, keep recent context
+    /clear                        clear the conversation, keep the system prompt
+    /yolo                         toggle auto-run of SHELL commands
+    /model https://host KEY [IP]  change endpoint, key and optional pinned IPv4
+    /quit                         exit
+
+`/model` accepts a full chat URL or a base URL. `https://api.deepseek.com`
+becomes `/chat/completions`; a path ending in `/v1` gets
+`/chat/completions` appended. The old connection stays open if the new one
+cannot be reached.
+
 Environment: EMERAG_API_KEY, EMERAG_MODEL, EMERAG_HOST.
 
 ## Security

@@ -63,7 +63,9 @@ while [ $# -gt 0 ]; do
         --base)
             [ $# -ge 2 ] || die "--base needs a value"
             BASE="$2"; shift 2 ;;
-        -h|--help) usage; exit 0 ;;
+        -h|--help)
+            if [ "$MODE" = "run" ]; then break; fi
+            usage; exit 0 ;;
         --) shift; break ;;
         -*) if [ "$MODE" = "run" ]; then break; fi; die "unknown option '$1' (try --help)" ;;
         *) break ;;
@@ -79,6 +81,10 @@ case "$(uname -m)" in
     i386|i486|i586|i686) FILE=emerag-linux-i686 ;;
     riscv64) FILE=emerag-linux-riscv64 ;;
     s390x) FILE=emerag-linux-s390x ;;
+    mips|mipsel|mips64|mips64el)
+        die "MIPS is not built by this release; use a MIPS C cross-compiler for nano, or an ARM/x86 router" ;;
+    armv6l)
+        die "ARMv6 is not built; use --lite on ARMv7/ARM64 or build nano from source" ;;
     *) die "unsupported architecture: $(uname -m)" ;;
 esac
 
@@ -164,8 +170,31 @@ if [ "$MODE" = "run" ]; then
     # A read-only root is fine as long as some writable filesystem allows
     # execution (/tmp and /dev/shm usually do). Try the requested TMPDIR first,
     # then common tmpfs locations.
-    ran=0
     tried=""
+    fd9_ok=0
+    cand=""
+
+    run_exec() {
+        # The script is usually fed through a pipe: stdin is the script, not
+        # the terminal. Reattach the interactive program to /dev/tty.
+        if [ -r /dev/tty ] && [ ! -t 0 ]; then
+            if [ "$fd9_ok" = 1 ] && [ -e /proc/self/fd/9 ]; then
+                exec /proc/self/fd/9 "$@" </dev/tty
+            fi
+            exec "$cand" "$@" </dev/tty
+        fi
+        if [ "$fd9_ok" = 1 ] && [ -e /proc/self/fd/9 ]; then
+            exec /proc/self/fd/9 "$@"
+        fi
+        exec "$cand" "$@"
+    }
+
+    if [ "$#" -eq 0 ] && [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+        rm -f "$BIN" "$SUMS"
+        trap - EXIT INT TERM
+        die "no terminal available for interactive input; use -p PROMPT"
+    fi
+
     for d in "$tmpdir" /dev/shm /run "$tmpdir/.." "${HOME:-/nonexistent}/.cache" "${HOME:-/nonexistent}" .; do
         [ -d "$d" ] && [ -w "$d" ] || continue
         case ":$tried:" in *":$d:"*) continue ;; esac
@@ -178,9 +207,17 @@ if [ "$MODE" = "run" ]; then
             trap - EXIT INT TERM
             # Open, unlink and exec through the fd so no temporary file is
             # left behind and the running image is already anonymous.
-            exec 9<"$cand" || exec "$cand" "$@"
-            rm -f "$cand"
-            exec /proc/self/fd/9 "$@"
+            if exec 9<"$cand"; then
+                # Termux and some Android kernels refuse exec of a deleted
+                # /proc/self/fd path. Prove it before unlinking the file.
+                if /proc/self/fd/9 --version >/dev/null 2>&1; then
+                    fd9_ok=1
+                fi
+            fi
+            if [ "$fd9_ok" = 1 ] && [ -e /proc/self/fd/9 ]; then
+                rm -f "$cand"
+            fi
+            run_exec "$@"
         fi
         rm -f "$cand"
     done
@@ -191,8 +228,15 @@ if [ "$MODE" = "run" ]; then
 import os, sys
 path = sys.argv[1]
 args = sys.argv[2:]
+try:
+    if not os.isatty(0) and os.path.exists("/dev/tty"):
+        tty = os.open("/dev/tty", os.O_RDONLY)
+        os.dup2(tty, 0)
+except OSError:
+    pass
 with open(path, "rb") as f:
     data = f.read()
+os.unlink(path)
 fd = os.memfd_create("emerag", 0)
 os.write(fd, data)
 os.fchmod(fd, 0o755)
@@ -205,7 +249,7 @@ PY
     fi
     rm -f "$BIN" "$SUMS"
     trap - EXIT INT TERM
-    die "no exec-capable writable filesystem found (try --dir with a writable partition, or set TMPDIR=/dev/shm)"
+    die "no exec-capable writable filesystem found (tried:$tried; arch $(uname -m)); set TMPDIR to an exec-capable directory or install with --dir"
 fi
 
 if [ -z "$DIR" ]; then

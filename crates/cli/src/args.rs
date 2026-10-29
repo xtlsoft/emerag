@@ -153,6 +153,7 @@ INTERFACE
 INTERACTIVE
   /new [name]            start another conversation (kept on disk unless --no-write)
   /session [N|name]      list or switch conversations
+  /session delete N|name delete a conversation (also /delete)
   /fork [name]           copy the current conversation into a new one
   /bg PROMPT             run a turn in the background (or end a prompt with " &")
   /wait [ID]             wait for a background turn; /kill ID cancels it

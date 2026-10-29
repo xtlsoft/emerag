@@ -31,7 +31,7 @@ nobody has to reverse-engineer a claim from the README.
 - **Interfaces**: interactive TUI, Ctrl+X chords, slash commands, cooked-mode
   and ASCII fallbacks, one-shot, JSON output, automatic first-run wizard,
   DeepSeek account login/logout, doctor, guide, key card.
-- **Sessions**: /new, /session, /fork, persisted 0600 JSON (or memory with
+- **Sessions**: /new, /session, /session delete, /fork, persisted 0600 JSON (or memory with
   --no-write), background turns via " &" or /bg with /wait and /kill; each
   background turn gets its own Agent and MCP/job state.
 - **Named providers**: /p lists configured endpoints only, custom endpoints

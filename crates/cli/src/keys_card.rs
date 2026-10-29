@@ -12,6 +12,7 @@ Type / then a command (prefix works):
   /mode        ask | auto | read-only | yolo
   /new [name]  new session
   /session     list / switch sessions
+  /session delete N|name  delete a session (also /delete)
   /fork [name] fork this session
   /bg PROMPT   run in background
   /wait /kill  wait for / cancel background

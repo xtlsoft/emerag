@@ -153,7 +153,12 @@ the direct form and `/logout` removes the local grant.
     /new [name]        start a fresh conversation
     /session           list sessions (name, messages, model, busy)
     /session N|name    switch
+    /session delete N|name  delete a session (also /delete)
     /fork [name]       copy the current conversation into a new one
+
+A session with a running background turn is not deleted until it is killed
+or finished. Deleting the visible session switches to the nearest remaining
+one; deleting the last one leaves a fresh empty `session-1`.
 
 `/new` and `/fork` never touch the other histories. With a writable config
 directory, sessions are saved to `sessions.json` (0600) next to the config

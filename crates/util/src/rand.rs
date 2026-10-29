@@ -79,17 +79,13 @@ pub fn fill_bytes(buf: &mut [u8]) -> Result<()> {
         use std::sync::Once;
         static WARN: Once = Once::new();
         WARN.call_once(|| {
-            eprintln!(
-                "warning: legacy Windows has no CSPRNG; TLS randomness is weak"
-            )
+            eprintln!("warning: legacy Windows has no CSPRNG; TLS randomness is weak")
         });
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        let mut s = nanos
-            ^ ((std::process::id() as u64) << 32)
-            ^ (buf.as_ptr() as usize as u64);
+        let mut s = nanos ^ ((std::process::id() as u64) << 32) ^ (buf.as_ptr() as usize as u64);
         for b in buf.iter_mut() {
             s ^= s >> 12;
             s ^= s << 25;

@@ -491,7 +491,14 @@ pub fn read_key() -> Result<Key> {
     #[cfg(windows)]
     {
         if emerag_util::sys::is_tty(0) {
-            return win::read_key();
+            match win::read_key() {
+                Ok(key) => return Ok(key),
+                Err(_) => {
+                    // Some console hosts hand us a handle that passes
+                    // GetConsoleMode but rejects ReadConsoleInputW. Fall back
+                    // to the byte decoder instead of terminating the TUI.
+                }
+            }
         }
     }
     read_key_bytes()

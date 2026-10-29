@@ -434,6 +434,155 @@ static int chat_turn(Tls *t, const char *host, const char *path,
     return -1;
 }
 
+static void copy_str(char *dst, size_t cap, const char *src) {
+    if (cap == 0) return;
+    if (!src) src = "";
+    strncpy(dst, src, cap - 1);
+    dst[cap - 1] = 0;
+}
+
+/* Parse https://host[:port][/path]. Returns 0 on success, -1 on a bad URL,
+ * -2 when the URL is plain http (nano has TLS only). */
+static int parse_endpoint(const char *url, char *host, size_t hostcap,
+                          char *path, size_t pathcap, int *port) {
+    const char *p = url;
+    const char *slash;
+    char *colon;
+    size_t n;
+    if (!url || !*url) return -1;
+    if (strncmp(p, "https://", 8) == 0) {
+        p += 8;
+    } else if (strncmp(p, "http://", 7) == 0) {
+        return -2;
+    }
+    slash = strchr(p, '/');
+    n = slash ? (size_t)(slash - p) : strlen(p);
+    if (n == 0 || n >= hostcap) return -1;
+    memcpy(host, p, n);
+    host[n] = 0;
+    colon = strchr(host, ':');
+    if (colon) {
+        *colon = 0;
+        if (!colon[1]) return -1;
+        *port = atoi(colon + 1);
+        if (*port < 1 || *port > 65535) return -1;
+    } else {
+        *port = 443;
+    }
+    if (!slash || !slash[1]) {
+        copy_str(path, pathcap, "/chat/completions");
+    } else {
+        copy_str(path, pathcap, slash);
+        if (strcmp(path, "/") == 0) {
+            copy_str(path, pathcap, "/chat/completions");
+        } else if (strlen(path) >= 3 &&
+                   strcmp(path + strlen(path) - 3, "/v1") == 0) {
+            if (strlen(path) + 17 >= pathcap) return -1;
+            strcat(path, "/chat/completions");
+        }
+    }
+    return 0;
+}
+
+static void compact_msgs(Msg *msgs, int *nmsg) {
+    int keep = 4;
+    int old = *nmsg;
+    int drop;
+    int i;
+    if (old <= keep + 1) {
+        printf("compact: nothing to do (%d messages)\n", old);
+        return;
+    }
+    drop = old - 1 - keep;
+    for (i = 1; i <= drop; i++) msg_free(&msgs[i]);
+    for (i = 1 + drop; i < old; i++) msgs[i - drop] = msgs[i];
+    *nmsg = old - drop;
+    for (i = *nmsg; i < old; i++) {
+        msgs[i].role = NULL;
+        msgs[i].content = NULL;
+    }
+    printf("compact: dropped %d oldest messages; %d remain\n", drop, *nmsg);
+}
+
+static void clear_msgs(Msg *msgs, int *nmsg) {
+    int i;
+    for (i = 1; i < *nmsg; i++) msg_free(&msgs[i]);
+    *nmsg = 1;
+    printf("session cleared\n");
+}
+
+static void nano_help(void) {
+    printf("commands:\n");
+    printf("  /help                         this text\n");
+    printf("  /compact                      drop oldest messages, keep recent context\n");
+    printf("  /clear                        clear the conversation, keep the system prompt\n");
+    printf("  /yolo                         toggle auto-run of model SHELL commands\n");
+    printf("  /model URL KEY [IP]           change endpoint, key and optional pinned IPv4\n");
+    printf("  /quit                         exit\n");
+}
+
+/* Change endpoint/key and reconnect. The old connection is kept if the new
+ * one fails, so a typo does not destroy a working session. */
+static void cmd_model(char *args, char *host, size_t hostcap,
+                      char *path, size_t pathcap, char *key, size_t keycap,
+                      char *ip, size_t ipcap, int *port, Tls **tls) {
+    char *url;
+    char *newkey;
+    char *newip;
+    char newhost[256];
+    char newpath[512];
+    char newipbuf[64];
+    char err[256];
+    int newport = 443;
+    int rc;
+    Tls *newtls;
+
+    url = strtok(args, " \t");
+    newkey = strtok(NULL, " \t");
+    newip = strtok(NULL, " \t");
+    if (!url) {
+        printf("endpoint: %s:%d%s\n", host, *port, path);
+        printf("usage: /model https://host[/path] KEY [IP]\n");
+        return;
+    }
+    if (!newkey || !*newkey) {
+        printf("usage: /model https://host[/path] KEY [IP]\n");
+        return;
+    }
+    if (strtok(NULL, " \t")) {
+        printf("usage: /model https://host[/path] KEY [IP]\n");
+        return;
+    }
+    newipbuf[0] = 0;
+    if (newip) copy_str(newipbuf, sizeof(newipbuf), newip);
+    rc = parse_endpoint(url, newhost, sizeof(newhost),
+                        newpath, sizeof(newpath), &newport);
+    if (rc == -2) {
+        printf("nano speaks TLS only; use https://\n");
+        return;
+    }
+    if (rc != 0) {
+        printf("bad endpoint: %s\n", url);
+        return;
+    }
+    newtls = tls_connect(newhost, newipbuf[0] ? newipbuf : NULL, newport,
+                         err, sizeof(err));
+    if (!newtls) {
+        printf("cannot connect to %s:%d: %s (old endpoint kept)\n",
+               newhost, newport, err);
+        return;
+    }
+    tls_close(*tls);
+    *tls = newtls;
+    copy_str(host, hostcap, newhost);
+    copy_str(path, pathcap, newpath);
+    copy_str(key, keycap, newkey);
+    copy_str(ip, ipcap, newipbuf);
+    *port = newport;
+    printf("endpoint: %s:%d%s (key set%s%s)\n", host, *port, path,
+           ip[0] ? ", ip " : "", ip);
+}
+
 static void usage(void) {
     printf("emerag-nano %s - tiny C emergency agent\n", NANO_VERSION);
     printf("TLS 1.3 + Chat Completions only. NO CERTIFICATE VERIFICATION.\n\n");
@@ -454,6 +603,10 @@ static void usage(void) {
 }
 
 int main(int argc, char **argv) {
+    char hostbuf[256];
+    char pathbuf[512];
+    char keybuf[1024];
+    char ipbuf[64];
     const char *host = "api.deepseek.com";
     const char *path = "/chat/completions";
     const char *model = "deepseek-chat";
@@ -492,6 +645,14 @@ int main(int argc, char **argv) {
         else if (argv[i][0] == '-') { fprintf(stderr, "emerag-nano: unknown option %s\n", argv[i]); return 2; }
         else once = argv[i];
     }
+    copy_str(hostbuf, sizeof(hostbuf), host);
+    copy_str(pathbuf, sizeof(pathbuf), path);
+    copy_str(keybuf, sizeof(keybuf), key);
+    copy_str(ipbuf, sizeof(ipbuf), ip ? ip : "");
+    host = hostbuf;
+    path = pathbuf;
+    key = keybuf;
+    ip = ipbuf[0] ? ipbuf : NULL;
     if (!once) {
         /* Nothing: interactive */
     }
@@ -500,7 +661,7 @@ int main(int argc, char **argv) {
     printf("WARNING: certificate verification is disabled; no CA store is embedded.\n");
     printf("host %s:%d%s  model %s\n", host, port, path, model);
     if (!key || !*key) printf("warning: no API key (set --key or EMERAG_API_KEY)\n");
-    printf("Type /quit to exit. Commands requested by the model are printed before running.\n\n");
+    printf("Type /help for commands. Commands requested by the model are printed before running.\n\n");
     fflush(stdout);
 
     tls = tls_connect(host, ip, port, err, sizeof(err));
@@ -524,6 +685,38 @@ int main(int argc, char **argv) {
             }
             if (strcmp(line, "/quit") == 0 || strcmp(line, "/q") == 0) break;
             if (line[0] == 0) continue;
+            if (strcmp(line, "/help") == 0) {
+                nano_help();
+                continue;
+            }
+            if (strcmp(line, "/compact") == 0) {
+                compact_msgs(msgs, &nmsg);
+                continue;
+            }
+            if (strcmp(line, "/clear") == 0) {
+                clear_msgs(msgs, &nmsg);
+                continue;
+            }
+            if (strcmp(line, "/yolo") == 0) {
+                ask = !ask;
+                printf("mode: %s\n", ask ? "ask before SHELL commands" : "yolo: run SHELL commands without asking");
+                if (!allow_shell) printf("note: --no-shell is still in effect\n");
+                continue;
+            }
+            if (strncmp(line, "/model", 6) == 0 &&
+                (line[6] == 0 || line[6] == ' ' || line[6] == '\t')) {
+                char *arg = line + 6;
+                while (*arg == ' ' || *arg == '\t') arg++;
+                cmd_model(arg, hostbuf, sizeof(hostbuf),
+                          pathbuf, sizeof(pathbuf),
+                          keybuf, sizeof(keybuf),
+                          ipbuf, sizeof(ipbuf), &port, &tls);
+                continue;
+            }
+            if (line[0] == '/') {
+                printf("unknown command '%s'; /help\n", line);
+                continue;
+            }
             msg_add(msgs, &nmsg, "user", line);
             chat_turn(tls, host, path, model, key, msgs, &nmsg, ask, allow_shell, max_turns);
             if (nmsg >= NANO_MAX_MSGS - 1) {

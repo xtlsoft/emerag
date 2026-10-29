@@ -54,7 +54,8 @@ when you need help most. emerag makes the opposite trade:
   x-dsh-auth-token.
 - **Live, not stuck.** Reasoning traces stream while the model thinks, each
   request shows a waiting status, and tool calls report their duration.
-- **Many conversations.** /new, /session and /fork keep independent histories.
+- **Many conversations.** /new, /session, /session delete and /fork keep
+  independent histories.
   A turn started with " &" or /bg keeps running while you switch and work in
   another session; /wait and /kill control it. Sessions persist as 0600 JSON,
   or stay in memory with --no-write.
