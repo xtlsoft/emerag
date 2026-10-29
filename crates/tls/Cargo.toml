@@ -1,0 +1,10 @@
+[package]
+name = "emerag-tls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "emerag component: tls"
+
+[dependencies]
+emerag-util = { workspace = true }
+emerag-crypto = { workspace = true }

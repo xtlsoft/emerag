@@ -1,0 +1,9 @@
+[package]
+name = "emerag-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "emerag component: crypto"
+
+[dependencies]
+emerag-util = { workspace = true }

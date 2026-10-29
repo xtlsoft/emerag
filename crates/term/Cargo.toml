@@ -1,0 +1,9 @@
+[package]
+name = "emerag-term"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "emerag component: term"
+
+[dependencies]
+emerag-util = { workspace = true }

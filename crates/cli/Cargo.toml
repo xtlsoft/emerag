@@ -1,0 +1,23 @@
+[package]
+name = "emerag"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "emerag - a tiny portable agent for emergencies"
+
+[[bin]]
+name = "emerag"
+path = "src/main.rs"
+
+[dependencies]
+emerag-util = { workspace = true }
+emerag-json = { workspace = true }
+emerag-crypto = { workspace = true }
+emerag-tls = { workspace = true }
+emerag-http = { workspace = true }
+emerag-term = { workspace = true }
+emerag-script = { workspace = true }
+emerag-llm = { workspace = true }
+emerag-agent = { workspace = true }
+emerag-mcp = { workspace = true }
+emerag-infer = { workspace = true }

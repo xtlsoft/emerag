@@ -1,0 +1,8 @@
+[package]
+name = "emerag-util"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zero-dependency foundation for emerag: errors, encodings, text, sys, time"
+
+[dependencies]

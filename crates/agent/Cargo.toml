@@ -1,0 +1,14 @@
+[package]
+name = "emerag-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The emerag agent loop, tools, permissions, jobs and subagents"
+
+[dependencies]
+emerag-util = { workspace = true }
+emerag-json = { workspace = true }
+emerag-llm = { workspace = true }
+emerag-script = { workspace = true }
+emerag-crypto = { workspace = true }
+emerag-mcp = { workspace = true }

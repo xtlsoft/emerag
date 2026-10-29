@@ -1,0 +1,66 @@
+# Status and roadmap
+
+emerag 0.1 is a complete, working emergency agent. This page records what is
+intentionally finished, what is experimental, and what is not built yet, so
+nobody has to reverse-engineer a claim from the README.
+
+## Finished and tested
+
+- **Transport**: HTTP/1.1 client, TLS 1.2 + 1.3 (AES-GCM, ChaCha20, X25519,
+  P-256), embedded CA store, SPKI pinning, DNS overrides, HTTP proxies,
+  redirects, SSE, cancellation, retryable timeouts.
+- **Providers**: Chat Completions, Responses, Anthropic Messages, DeepSeek,
+  OpenAI, OpenCode Console/Go, ollama/llama.cpp/LM Studio, custom endpoints.
+  Streaming tool calls and reasoning fields are normalized.
+- **Agent**: tool loop, per-call approvals, four permission modes, subagents,
+  background jobs, compaction, JSONL transcripts, usage accounting.
+- **Tools**: shell (bash/zsh/fish/sh/cmd/pwsh/python/php), file read/write/edit,
+  list/glob/grep, script engine, ask-user, task, job_*, skill, run_elevated.
+- **Script engine**: Lua 5.4 subset with a deterministic instruction budget,
+  host functions for fs/env/proc/time/json/hash/base64.
+- **Skills**: SKILL.md discovery, catalog in the system prompt, on-demand load.
+- **MCP**: stdio client (initialize, tools/list, tools/call), namespaced tools,
+  timeouts, stderr diagnostics.
+- **Interfaces**: interactive TUI, Ctrl+X chords, slash commands, cooked-mode
+  and ASCII fallbacks, one-shot, JSON output, wizard, doctor, guide, key card.
+- **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
+  (qemu-smoke-tested), Windows x64/x86, s390x glibc.
+- **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,
+  local up/status/stop/models, packaging script.
+
+## Experimental
+
+- **Windows 7**: scripts/build-legacy-win.sh builds with Rust 1.77.2, the last
+  toolchain supporting Windows 7. It was not verifiable in this environment
+  (rustup interrupted the 1.77 installation), so treat it as untested. The
+  default build needs Windows 8+ because Rust's std imports WaitOnAddress and
+  GetSystemTimePreciseAsFileTime.
+- **macOS**: source is portable and CI builds both architectures on macOS
+  runners, but no artifact was produced here (no Apple SDK).
+- **s390x**: builds against glibc; musl std is not published upstream.
+- **loongarch64**: target exists in Rust, but no loongarch linker is installed
+  here. Build on a loongarch host.
+
+## Not implemented
+
+- A native GGUF inference engine. crates/infer is reserved. The offline
+  bundle currently carries llama.cpp instead; the payload format is designed
+  so the engine can replace it without changing the CLI.
+- MCP server mode (emerag exposing its tools *to* another agent). MCP client
+  mode is complete.
+- Session resume. Transcripts are written; loading them back into a fresh
+  process is manual today.
+- TLS: no client certificates, no resumption, no TLS 1.0/1.1, no RSA key
+  exchange (ECDHE only), no OCSP/CRL checking.
+- Windows 2000/XP. Rust's std requires Windows 7; a no_std port would be a
+  separate project.
+
+## Known deviations from the original brief
+
+- The offline release is one file, but it bundles a small llama.cpp server and
+  a GGUF model rather than embedding a Rust inference engine. A 0.5B model
+  would otherwise multiply the agent's 3.2 MiB RSS by 200x.
+- Windows 2000 is not reachable with the Rust standard library. The measured
+  floor is Windows 8 for the default build and Windows 7 for the legacy build.
+- Local models below ~0.5B parameters are included as options but tool-calling
+  reliability is poor; the docs say so instead of pretending otherwise.

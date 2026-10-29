@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = ["crates/util", "crates/json", "crates/crypto", "crates/tls", "crates/http", "crates/term", "crates/script", "crates/llm", "crates/agent", "crates/mcp", "crates/infer", "crates/cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.74"
+repository = "https://github.com/emerag/emerag"
+authors = ["emerag contributors"]
+
+# emerag has ZERO third-party dependencies by design: every crate below uses
+# only `std` and hand-written FFI declarations. This keeps builds reproducible,
+# offline-capable and portable to unusual targets (musl, s390x, loong64, ...).
+[workspace.dependencies]
+emerag-util = { path = "crates/util" }
+emerag-json = { path = "crates/json" }
+emerag-crypto = { path = "crates/crypto" }
+emerag-tls = { path = "crates/tls" }
+emerag-http = { path = "crates/http" }
+emerag-term = { path = "crates/term" }
+emerag-script = { path = "crates/script" }
+emerag-llm = { path = "crates/llm" }
+emerag-agent = { path = "crates/agent" }
+emerag-mcp = { path = "crates/mcp" }
+emerag-infer = { path = "crates/infer" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+overflow-checks = false
+debug = false
+
+[profile.size]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+panic = "abort"
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1
+debug = 1

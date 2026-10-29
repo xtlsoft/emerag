@@ -1,0 +1,11 @@
+[package]
+name = "emerag-llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LLM provider abstraction: Chat Completions, Responses, Anthropic Messages"
+
+[dependencies]
+emerag-util = { workspace = true }
+emerag-json = { workspace = true }
+emerag-http = { workspace = true }

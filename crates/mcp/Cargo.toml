@@ -1,0 +1,10 @@
+[package]
+name = "emerag-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal MCP (Model Context Protocol) stdio client for emerag"
+
+[dependencies]
+emerag-util = { workspace = true }
+emerag-json = { workspace = true }
