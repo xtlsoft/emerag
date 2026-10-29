@@ -24,6 +24,7 @@ If you have network but no patience:
     wget -qO- http://10.20.2.226:8899/install.sh | sh
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --mini
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
 
 --run uses a writable tmpfs and leaves the root filesystem alone. If no
 curl/wget exists, busybox wget is used. --mini is the packed 17-CA build.

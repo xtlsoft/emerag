@@ -37,7 +37,7 @@ when you need help most. emerag makes the opposite trade:
 - **Zero third-party crates.** The whole agent is Rust plus std, with
   hand-written TLS, HTTP, JSON, crypto, X.509 and a Lua-subset interpreter.
   Builds work offline and cross-compile to unusual targets.
-- **Small.** 1.5-1.9 MiB on disk; 3.2 MB RSS in normal use; no background
+- **Small.** 1.5-1.9 MiB on disk (the lite core is 0.30-0.37 MiB); 3.2 MB RSS in normal use; no background
   threads when idle; no model weights in the agent process.
 - **Terminal-first.** VT100, serial consoles, 40-column windows, legacy
   Windows consoles, no Unicode, no color, no arrow keys: all supported.
@@ -66,6 +66,9 @@ when you need help most. emerag makes the opposite trade:
 - **Mini build.** The mini feature swaps the full CA bundle for 17 major
   roots, and scripts/build-mini.sh packs the result with UPX:
   **0.54-0.64 MiB** on disk for ARM/x86.
+- **Lite core.** A separate 306-369 KB binary with only Chat Completions,
+  a streaming loop and five tools (shell/read/write/edit/list). It does not
+  link the provider adapters or agent framework at all.
 - **Broken-shell and PID-limit aware.** bash, zsh, fish, sh, cmd, PowerShell,
   Python and PHP are supported; when none works, or RLIMIT_NPROC blocks fork,
   the built-in script engine exposes forkless filesystem and syscall-level
@@ -99,14 +102,15 @@ clipboard. If DNS is broken it offers to pin an IP address.
 
     # smaller packed build
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --mini
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
 
 The installer tries curl, wget and busybox wget, verifies SHA-256 when a
 checksum tool exists, and falls back from a noexec TMPDIR to /dev/shm.
 Options must come before --run; arguments after it go to emerag.
 
 A binary cannot fit in a few kilobytes with TLS, HTTP, JSON, the provider
-protocols and the tool loop. If ROM is nearly full, use --run --mini: the
-download lives in RAM and nothing is installed.
+protocols and the tool loop. If ROM is nearly full, use --run --mini or
+--run --lite: the download lives in RAM and nothing is installed.
 
 For scripts and automation:
 

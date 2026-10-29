@@ -186,6 +186,7 @@ selected endpoint, so it appears under `/p` next time.
     wget -qO- http://10.20.2.226:8899/install.sh | sh
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --mini
+    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
 
 The installer needs one of curl, wget or busybox wget. It verifies SHA-256,
 installs to `~/.local/bin` or `/usr/local/bin`, and for --run tries TMPDIR,
@@ -195,8 +196,13 @@ are noexec it tries a Python memfd, then reports the limitation.
 `scripts/build-mini.sh` builds a ROM-oriented variant (17 major CA roots
 instead of the full bundle, size profile, UPX). It is 0.54-0.64 MiB on disk,
 not a few kilobytes: TLS, HTTP, JSON, provider protocols and tools have a
-floor. On a router with almost no free ROM, use `--run --mini` so the binary
-lives in RAM.
+floor. On a router with almost no free ROM, use `--run --mini` (full agent) or
+`--run --lite` (306-369 KB core) so the binary lives in RAM.
+
+The lite core is a separate binary: Chat Completions only, with shell,
+read_file, write_file, edit_file and list_dir. It has no sessions, MCP, Lua,
+OAuth, skills or subagents. Use it when the machine cannot spare another
+megabyte; use the full build when you need the rest.
 
 ## Broken networks
 

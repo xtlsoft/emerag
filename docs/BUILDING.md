@@ -34,6 +34,19 @@ fit in a few kilobytes. When ROM is nearly full, do not install it: the
 installer's `--run --mini` downloads into /dev/shm or another writable tmpfs
 and executes it there, so only RAM is consumed.
 
+## Lite core
+
+    ./scripts/build-lite.sh x86_64-unknown-linux-musl \
+        aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf
+
+The `emerag-lite` binary is separate from `emerag`: it does not link
+emerag-llm or emerag-agent. It implements one Chat Completions loop and five
+tools directly on the HTTP/TLS/JSON substrate.
+
+Measured packed sizes: x86_64 369 KB, aarch64 333 KB, armv7 337 KB, Windows x64 306 KB. Raw is
+about 0.9 MB. It has no sessions, MCP, Lua, OAuth, skills, subagents or
+approval modes beyond a y/N prompt.
+
 Other size levers (not used for the shipped artifacts): nightly `build-std`
 with `panic_immediate_abort`, `-Z location-detail=none`, and dropping the
 script/MCP features at compile time. Each trades capability or toolchain

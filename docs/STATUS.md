@@ -39,7 +39,7 @@ nobody has to reverse-engineer a claim from the README.
   provider..."; wizard selections are remembered.
 - **Distribution**: POSIX/busybox installer with SHA-256 verification and
   tmpfs/noexec fallbacks; mini build (17-CA roots, size profile, UPX) around
-  0.54-0.61 MiB.
+  0.54-0.61 MiB; a standalone emerag-lite core at 0.30-0.37 MiB.
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
 - **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,
@@ -64,6 +64,10 @@ nobody has to reverse-engineer a claim from the README.
   memfd is available.
 - **Session files**: concurrent emerag processes writing the same
   sessions.json are not locked; the last writer wins.
+- **Lite core**: separate binary, tested end-to-end with the mock provider on
+  x86_64 and under qemu-aarch64. It speaks Chat Completions only, has five
+  tools, and uses the same curated 17-CA bundle. It is not a drop-in
+  replacement for the full agent.
 
 - **Windows 7**: scripts/build-legacy-win.sh builds with Rust 1.77.2, the last
   toolchain supporting Windows 7. It was not verifiable in this environment
