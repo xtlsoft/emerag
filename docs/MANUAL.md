@@ -194,7 +194,7 @@ installs to `~/.local/bin` or `/usr/local/bin`, and for --run tries TMPDIR,
 are noexec it tries a Python memfd, then reports the limitation.
 
 `scripts/build-mini.sh` builds a ROM-oriented variant (17 major CA roots
-instead of the full bundle, size profile, UPX). It is 0.54-0.64 MiB on disk,
+instead of the full bundle, size profile, UPX). It is 0.55-0.62 MiB on disk,
 not a few kilobytes: TLS, HTTP, JSON, provider protocols and tools have a
 floor. On a router with almost no free ROM, use `--run --mini` (full agent) or
 `--run --lite` (306-369 KB core) so the binary lives in RAM.

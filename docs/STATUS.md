@@ -39,7 +39,7 @@ nobody has to reverse-engineer a claim from the README.
   provider..."; wizard selections are remembered.
 - **Distribution**: POSIX/busybox installer with SHA-256 verification and
   tmpfs/noexec fallbacks; mini build (17-CA roots, size profile, UPX) around
-  0.54-0.61 MiB; a standalone emerag-lite core at 0.30-0.37 MiB.
+  0.55-0.62 MiB; a standalone emerag-lite core at 0.30-0.37 MiB.
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
 - **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,

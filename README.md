@@ -65,7 +65,7 @@ when you need help most. emerag makes the opposite trade:
   read-only.
 - **Mini build.** The mini feature swaps the full CA bundle for 17 major
   roots, and scripts/build-mini.sh packs the result with UPX:
-  **0.54-0.64 MiB** on disk for ARM/x86.
+  **0.55-0.62 MiB** on disk for ARM/x86.
 - **Lite core.** A separate 306-369 KB binary with only Chat Completions,
   a streaming loop and five tools (shell/read/write/edit/list). It does not
   link the provider adapters or agent framework at all.
