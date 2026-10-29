@@ -16,14 +16,14 @@ That is the whole installation.
 
 | property | value (Linux x86_64, release build) |
 | --- | --- |
-| binary size | **1.84 MiB** (1.93 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
+| binary size | **1.87 MiB** (1.96 MB) static-pie, 0 DT_NEEDED, 0 GLIBC symbols |
 | resident memory | **3.2 MB** (3.1 MiB) maximum RSS for a full one-shot tool-using session |
 | dependencies | **zero** Rust crates, zero shared libraries |
-| tests | 479 unit/integration tests + 10 end-to-end scenarios |
+| tests | 480 unit/integration tests + 10 end-to-end scenarios |
 | startup | milliseconds; no config file required |
 
-Other targets: aarch64 1.57 MiB, armv7 1.51 MiB, riscv64 1.50 MiB,
-i686 1.67 MiB, Windows x64 1.56 MiB, Windows x86 1.50 MiB, s390x 1.85 MiB. See
+Other targets: aarch64 1.57 MiB, armv7 1.53 MiB, riscv64 1.52 MiB,
+i686 1.69 MiB, Windows x64 1.58 MiB, Windows x86 1.52 MiB, s390x 1.88 MiB. See
 [docs/COMPAT.md](docs/COMPAT.md).
 
 ## Why
@@ -66,9 +66,12 @@ when you need help most. emerag makes the opposite trade:
 - **Mini build.** The mini feature swaps the full CA bundle for 17 major
   roots, and scripts/build-mini.sh packs the result with UPX:
   **0.54-0.64 MiB** on disk for ARM/x86.
-- **Broken-shell aware.** bash, zsh, fish, sh, cmd, PowerShell, Python and PHP
-  are supported; when none works, the built-in script engine exposes
-  filesystem, process, environment, hash and JSON primitives.
+- **Broken-shell and PID-limit aware.** bash, zsh, fish, sh, cmd, PowerShell,
+  Python and PHP are supported; when none works, or RLIMIT_NPROC blocks fork,
+  the built-in script engine exposes forkless filesystem and syscall-level
+  primitives: open/read/write/seek/fsync, read_at/write_at, stat, chmod,
+  symlink, kill, pid/limits and memory/load readers. proc.run and the shell
+  tool still need a child process.
 - **Offline-capable.** 'emerag local up' runs a local model; the offline
   release is a single file containing the agent, a GGUF model and a static
   llama.cpp server (see [docs/LOCAL-MODELS.md](docs/LOCAL-MODELS.md)).

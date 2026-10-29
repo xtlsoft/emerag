@@ -76,7 +76,7 @@ pub(crate) fn install(interp: &mut Interp) {
     }
     interp.set_global("os", Value::Table(os_t));
 
-    for ns in ["io", "fs", "proc", "net"] {
+    for ns in ["io", "fs", "proc", "net", "sys"] {
         let table = interp.register_host_ns(ns);
         interp.set_global(ns, Value::Table(table));
     }

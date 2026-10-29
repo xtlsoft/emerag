@@ -22,7 +22,9 @@ nobody has to reverse-engineer a claim from the README.
 - **Tools**: shell (bash/zsh/fish/sh/cmd/pwsh/python/php), file read/write/edit,
   list/glob/grep, script engine, ask-user, task, job_*, skill, run_elevated.
 - **Script engine**: Lua 5.4 subset with a deterministic instruction budget,
-  host functions for fs/env/proc/time/json/hash/base64.
+  forkless fs/sys host functions (descriptors, read_at/write_at, stat, chmod,
+  symlink, kill, pid/limit/load/memory readers), plus proc/time/json/hash/base64.
+  The sys namespace is registered now, so sys.os/sys.arch/sys.cwd work too.
 - **Skills**: SKILL.md discovery, catalog in the system prompt, on-demand load.
 - **MCP**: stdio client (initialize, tools/list, tools/call), namespaced tools,
   timeouts, stderr diagnostics.

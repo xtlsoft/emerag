@@ -129,7 +129,7 @@ pub fn all_specs() -> Vec<ToolSpec> {
         ),
         ToolSpec::new(
             SCRIPT,
-            "Run a small Lua-subset script when a shell is unavailable or unsafe.              Globals: fs (read/write/list/mkdir/remove/stat), env.get, proc.run, json.encode/decode,              hash.sha256, time.now_ms, sleep.ms, print. The script's return value is returned.",
+            "Run a small Lua-subset script when a shell is unavailable or unsafe.              Forkless globals: fs.*, sys.* (descriptors, read_at/write_at, stat, chmod, symlink, kill, pid/limits).              Forking: proc.run needs a child process. Also env.get, json, hash, time, sleep, print.",
             obj(
                 json!({
                     "source": {"type": "string", "description": "script source"},

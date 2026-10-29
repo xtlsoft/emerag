@@ -34,8 +34,50 @@ All are available as globals; failures raise a Lua error catchable with pcall.
 | `json.encode(v)` / `json.decode(s)` | string / table | |
 | `hash.sha256(s)` | hex string | |
 | `base64.encode(s)` / `base64.decode(s)` | string | |
+| `sys.open(path, mode)` | fd | mode r/w/a/r+/w+/a+; direct descriptor |
+| `sys.read(fd, max)` | string | up to 1 MiB per call; empty at EOF |
+| `sys.write(fd, text)` | bytes | |
+| `sys.seek(fd, off[, whence])` | position | whence set/cur/end |
+| `sys.close(fd)` / `sys.fsync(fd)` | bool / nil | |
+| `sys.read_at(path, off, len)` | string | pread-style whole-file helper |
+| `sys.write_at(path, off, text)` | bytes | pwrite-style |
+| `sys.truncate(path, size)` | nil | |
+| `sys.chmod(path, mode)` | nil | Unix |
+| `sys.symlink(target, link)` / `sys.readlink(path)` | nil / string | Unix symlink |
+| `sys.link(from, to)` | nil | hard link |
+| `sys.pid()`, `sys.ppid()`, `sys.uid()`, `sys.gid()` | number | no fork |
+| `sys.pid_limit()` | table | `{soft, hard, raw}` from /proc/self/limits |
+| `sys.loadavg()`, `sys.uptime_ms()`, `sys.meminfo()` | table/number/table | /proc readers |
+| `sys.kill(pid, sig)` | nil | signal name or number; direct syscall |
+| `sys.random_hex(n)` | string | OS randomness |
 | `sys.os()`, `sys.arch()`, `sys.cwd()` | string | |
 | `print(...)` | nil | captured into the tool result |
+
+## Forkless mode
+
+There is no separate mode flag: `fs.*` and every `sys.*` function except
+`sys.kill` use filesystem syscalls through Rust std and never create a child
+process. This is the fallback when `RLIMIT_NPROC`/PID limits are exhausted and
+`fork` returns EAGAIN.
+
+`proc.run` and the shell tool do need a child process. If they fail, switch to
+the script tool:
+
+    -- check the limit and the current pid
+    print(sys.pid(), sys.pid_limit().soft)
+
+    -- chunked log read without a shell or fork
+    local fd = sys.open("/var/log/messages", "r")
+    while true do
+      local chunk = sys.read(fd, 65536)
+      if chunk == "" then break end
+      print(chunk)
+    end
+    sys.close(fd)
+
+`sys.read_at`/`sys.write_at` are also useful when `fs.read`'s 2 MiB limit is
+too small. All descriptor calls are bounded by the script limits (instruction
+budget, 1 MiB per read, 20 s wall clock).
 
 ## Language subset
 

@@ -328,9 +328,16 @@ pub fn run_with_input(
     }
 
     let started = Instant::now();
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| AgentError::new(format!("cannot start {}: {e}", shell.path.display())))?;
+    let mut child = cmd.spawn().map_err(|e| {
+        let mut msg = format!("cannot start {}: {e}", shell.path.display());
+        if e.raw_os_error() == Some(11)
+            || e.kind() == std::io::ErrorKind::WouldBlock
+            || e.to_string().to_ascii_lowercase().contains("resource temporarily")
+        {
+            msg.push_str("; process/PID limit reached? the script tool's fs.* and sys.* functions are forkless");
+        }
+        AgentError::new(msg)
+    })?;
 
     if let Some(bytes) = input {
         if let Some(mut si) = child.stdin.take() {
