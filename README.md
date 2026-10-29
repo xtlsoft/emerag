@@ -100,13 +100,15 @@ clipboard. If DNS is broken it offers to pin an IP address.
     # temporary run; uses tmpfs/RAM and works with a read-only root
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
 
-    # smaller packed build
+    # full agent, packed
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --mini
+
+    # emergency core, 306-369 KB
     wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
 
 The installer tries curl, wget and busybox wget, verifies SHA-256 when a
 checksum tool exists, and falls back from a noexec TMPDIR to /dev/shm.
-Options must come before --run; arguments after it go to emerag.
+Installer options may follow --run; unknown options after it go to emerag.
 
 A binary cannot fit in a few kilobytes with TLS, HTTP, JSON, the provider
 protocols and the tool loop. If ROM is nearly full, use --run --mini or
