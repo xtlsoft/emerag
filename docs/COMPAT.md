@@ -85,10 +85,23 @@ The x86_64 binary was smoke-tested under Wine 9.0 (--version, --keys,
 --doctor): it starts, detects cmd/PowerShell, and resolves Windows config
 paths. It has not been executed on a real Windows installation.
 
+## Release tiers
+
+| tier | language | size | certificates |
+| --- | --- | --- | --- |
+| nano | C89 | 58-82 KB | none, verification disabled |
+| lite | Rust | 530-630 KB | none, verification disabled |
+| full | Rust | 1.6-2.0 MB | 118-CA bundle, verification on |
+
+Nano has its own Windows 98/2000/XP path (VC6/WinSock 2). Lite and full can
+target rust9x for legacy Windows; see [LEGACY.md](LEGACY.md).
+
+## Windows import table
+
 | target | size | imports | minimum OS |
 | --- | --- | --- | --- |
-| x86_64-pc-windows-gnu | 1.44 MiB | KERNEL32, msvcrt, ntdll, WS2_32, api-ms-win-core-synch-l1-2-0 | Windows 8 (see below) |
-| i686-pc-windows-gnu | 1.40 MiB | same | Windows 8 |
+| x86_64-pc-windows-gnu | 1.58 MiB | KERNEL32, msvcrt, ntdll, WS2_32, api-ms-win-core-synch-l1-2-0 | Windows 8 (see below) |
+| i686-pc-windows-gnu | 1.52 MiB | same | Windows 8 |
 | legacy 1.77 x64/x86 | ~1.4 MiB | see legacy section | Windows 7 |
 
 Current Rust (1.78+) only supports Windows 10 and newer as a platform, and

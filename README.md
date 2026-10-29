@@ -170,8 +170,11 @@ network you do not control.
 
 ## Build
 
-    cargo build --release                 # host
-    ./scripts/build-cross.sh              # every installed target
+    cargo build --release                 # host (full)
+    ./scripts/build-cross.sh              # full, every installed target
+    ./scripts/build-lite.sh               # lite, no CA bundle
+    (cd nano && ./build.sh)               # nano C, Linux/Windows
+    ./scripts/build-legacy.sh             # optional rust9x lite/full
     ./scripts/compat-report.sh            # minimum OS/static-link report
     ./tests/e2e.sh                        # mock providers, no network
 

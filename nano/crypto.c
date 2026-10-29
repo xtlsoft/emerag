@@ -421,6 +421,7 @@ int gcm_decrypt(const u8 key[16], const u8 iv[12],
 }
 
 /* ---------------- X25519 (TweetNaCl-style field) ---------------- */
+/* Field arithmetic and ladder adapted from TweetNaCl, public domain. */
 
 typedef i64 gf[16];
 
