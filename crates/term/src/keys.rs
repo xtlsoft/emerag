@@ -490,14 +490,16 @@ thread_local! {
 pub fn read_key() -> Result<Key> {
     #[cfg(windows)]
     {
-        // Try the console record reader first, even when isatty() disagrees:
-        // ConPTY and some launchers expose a console handle that GetConsoleMode
-        // does not classify as a tty. ReadConsoleInputW fails harmlessly on a
-        // pipe, in which case the byte decoder below is still used.
-        match win::read_key() {
-            Ok(key) => return Ok(key),
-            Err(_) => {
-                // Fall back to the byte decoder instead of terminating the TUI.
+        // If VT input mode was accepted, use the byte decoder: ConPTY and
+        // Windows Terminal deliver arrows as ESC [ A, and key records can be
+        // ambiguous there. Only legacy consoles without VT input need
+        // ReadConsoleInputW.
+        if !crate::raw::vt_input() {
+            match win::read_key() {
+                Ok(key) => return Ok(key),
+                Err(_) => {
+                    // Fall through to the byte decoder.
+                }
             }
         }
     }
