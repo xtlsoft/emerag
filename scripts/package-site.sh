@@ -33,12 +33,15 @@ for f in "$DIST"/emerag-*; do
         *-s390x-unknown-linux-gnu) plat=linux-s390x ;;
         *-x86_64-pc-windows-gnu.exe) plat=windows-x86_64.exe ;;
         *-i686-pc-windows-gnu.exe) plat=windows-x86.exe ;;
+        *-legacy-windows-x86.exe) plat=legacy-windows-x86.exe ;;
+        *-legacy-windows-pentium.exe) plat=legacy-windows-pentium.exe ;;
         *-x86_64-apple-darwin) plat=macos-x86_64 ;;
         *-aarch64-apple-darwin) plat=macos-arm64 ;;
         *-linux-x86_64) plat=linux-x86_64 ;;
         *-linux-aarch64) plat=linux-aarch64 ;;
         *-linux-armv7) plat=linux-armv7 ;;
         *-linux-i686) plat=linux-i686 ;;
+        *-linux-riscv64) plat=linux-riscv64 ;;
         *-windows-x86_64.exe) plat=windows-x86_64.exe ;;
         *-windows-x86.exe) plat=windows-x86.exe ;;
         *) continue ;;

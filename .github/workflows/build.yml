@@ -132,23 +132,39 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { page: linux-x86_64, cc: musl-gcc, ext: "" }
-          - { page: windows-x86.exe, cc: i686-w64-mingw32-gcc, ext: ".exe" }
-          - { page: windows-x86_64.exe, cc: x86_64-w64-mingw32-gcc, ext: ".exe" }
+          - { page: linux-x86_64, cc: musl-gcc, zig: "" }
+          - { page: linux-aarch64, cc: "", zig: aarch64-linux-musl }
+          - { page: linux-armv7, cc: "", zig: arm-linux-musleabihf }
+          - { page: linux-i686, cc: "", zig: x86-linux-musl }
+          - { page: linux-riscv64, cc: "", zig: riscv64-linux-musl }
+          - { page: windows-x86.exe, cc: i686-w64-mingw32-gcc, zig: "" }
+          - { page: windows-x86_64.exe, cc: x86_64-w64-mingw32-gcc, zig: "" }
     steps:
       - uses: actions/checkout@v4
       - name: Install compilers and UPX
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools mingw-w64 upx-ucl
+      - name: Install Zig for musl cross builds
+        if: matrix.zig != ''
+        run: |
+          curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+          tar -xJf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Build nano
         run: |
           mkdir -p out
           out="out/emerag-nano-${{ matrix.page }}"
-          case "${{ matrix.ext }}" in
-            .exe) ${{ matrix.cc }} -std=gnu89 -Os -Wall -Wextra common.c crypto.c tls.c emerag.c -o "$out" -lws2_32 -ladvapi32 ;;
-            *)    ${{ matrix.cc }} -std=gnu89 -Os -static -Wall -Wextra common.c crypto.c tls.c emerag.c -o "$out" ;;
-          esac
+          if [ -n "${{ matrix.zig }}" ]; then
+            zig cc -target "${{ matrix.zig }}" -std=gnu89 -Os -static -Wall -Wextra \
+              common.c crypto.c tls.c emerag.c -o "$out"
+          elif [ "${{ matrix.page }}" = "linux-x86_64" ]; then
+            musl-gcc -std=gnu89 -Os -static -Wall -Wextra \
+              common.c crypto.c tls.c emerag.c -o "$out"
+          else
+            ${{ matrix.cc }} -std=gnu89 -Os -Wall -Wextra \
+              common.c crypto.c tls.c emerag.c -o "$out" -lws2_32 -ladvapi32
+          fi
           upx --best --lzma "$out"
         working-directory: nano
       - uses: actions/upload-artifact@v4
@@ -184,9 +200,47 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  rust9x:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Download rust9x toolchain
+        run: |
+          curl -fsSL -o /tmp/rust9x.tar.xz \
+            https://github.com/rust9x/rust/releases/download/rust9x-1.99.1-v1/rust9x-1.99.1-v1-x86_64-unknown-linux-gnu.tar.xz
+          tar -xJf /tmp/rust9x.tar.xz -C /tmp
+          rustup toolchain link rust9x /tmp/rust9x-1.99.1-v1-x86_64-unknown-linux-gnu
+      - name: Fetch MSVC CRT and SDK import libraries
+        run: |
+          cargo install xwin --locked
+          xwin --accept-license --arch x86 --cache-dir "$PWD/.xwin-cache" splat --output "$PWD/sdk"
+      - name: Build full and lite for 586/686
+        run: |
+          SDK="$PWD/sdk"
+          export RUSTC_BOOTSTRAP=1
+          export RUSTFLAGS="-C link-arg=/SUBSYSTEM:CONSOLE,4.0 -C link-arg=/OSVERSION:3.1 -C link-arg=/STACK:131072 -C target-feature=+crt-static -C link-arg=/LIBPATH:$SDK/crt/lib/x86 -C link-arg=/LIBPATH:$SDK/sdk/lib/um/x86 -C link-arg=/LIBPATH:$SDK/sdk/lib/ucrt/x86 -Zunicows=no"
+          mkdir -p out
+          build() {
+            target="$1"; tier="$2"; page="$3"; profile="$4"; features="$5"
+            linker_var="CARGO_TARGET_$(printf '%s' "$target" | tr 'a-z-' 'A-Z_')_LINKER"
+            export "$linker_var=rust-lld"
+            cargo +rust9x build --profile "$profile" $features --bin emerag --target "$target"
+            cp "target/$target/$profile/emerag.exe" "out/emerag-$tier-$page"
+          }
+          build i586-rust9x-windows-msvc full legacy-windows-pentium release ""
+          build i586-rust9x-windows-msvc lite legacy-windows-pentium size "--features lite"
+          build i686-rust9x-windows-msvc full legacy-windows-x86 release ""
+          build i686-rust9x-windows-msvc lite legacy-windows-x86 size "--features lite"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust9x
+          path: out/*
+          if-no-files-found: error
+
   pages:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [test, full-linux, lite-linux, windows, nano, macos]
+    needs: [test, full-linux, lite-linux, windows, nano, macos, rust9x]
     runs-on: ubuntu-latest
     permissions:
       contents: read

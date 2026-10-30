@@ -38,7 +38,7 @@ nobody has to reverse-engineer a claim from the README.
   get names, and the catalog is shown only through "Configure another
   provider..."; wizard selections are remembered.
 - **Distribution**: POSIX/busybox installer with SHA-256 verification and
-  tmpfs/noexec fallbacks; three tiers: nano C (58-82 KB), lite Rust
+  tmpfs/noexec fallbacks; three tiers: nano C (44-83 KB), lite Rust
   (530-630 KB, no CA bundle), full Rust (1.3-2.0 MB, 118-CA bundle).
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
@@ -64,13 +64,14 @@ nobody has to reverse-engineer a claim from the README.
   Python memfd is available.
 - **Session files**: concurrent emerag processes writing the same
   sessions.json are not locked; the last writer wins.
-- **Nano**: C89/VC6 source. Linux x86_64 musl and Windows x64/x86 PE builds
-  are produced. DeepSeek TLS 1.3 and the mock shell loop were tested; Windows
-  x64 runs under Wine. The VC6 build and Windows 98/2000/XP execution were not
-  available in this environment.
-- **Legacy Rust**: rust9x build script and a legacy RNG fallback are present,
-  but the rust9x toolchain/MSVC linker was not installed, so no lite/full
-  9x/2000 artifact was produced or tested.
+- **Nano**: C89/VC6 source. Linux x86_64/ARM64/ARMv7/i686/RISC-V static-musl
+  and Windows x64/x86 PE builds are produced. DeepSeek TLS 1.3, Chinese input,
+  reconnect-after-close and the mock shell loop were tested; Windows x64 runs
+  under Wine. The VC6 build and Windows 98/2000/XP execution were not available
+  in this environment.
+- **Legacy Rust**: rust9x i586/i686 full and lite builds are produced by CI
+  with rust-lld and xwin MSVC import libraries. They have not been runtime-
+  tested on 98/2000 hardware; the C nano remains the native path.
 
 - **Windows 7**: scripts/build-legacy-win.sh builds with Rust 1.77.2, the last
   toolchain supporting Windows 7. It was not verifiable in this environment

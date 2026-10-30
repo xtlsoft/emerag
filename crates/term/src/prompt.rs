@@ -148,6 +148,7 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
     let mut out = io::stdout();
     let mut selected = default;
     let mut drawn = 0usize;
+    let mut typed = String::new();
     draw_choice(&mut out, caps, title, labels, selected, true, &mut drawn)?;
     loop {
         let key = match read_key() {
@@ -186,15 +187,53 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
                 }
             }
             KeyCode::Char(c) if c.is_ascii_digit() && !key.ctrl => {
-                let n = c.to_digit(10).unwrap_or(0) as usize;
-                let index = if n == 0 { 9 } else { n - 1 };
-                if index < labels.len() {
-                    selected = index;
-                    finish_choice(&mut out, caps, title, labels, selected, &mut drawn)?;
-                    return Ok(selected);
+                if labels.len() > 9 {
+                    // Eleven providers do not fit in a single digit. Collect
+                    // the number and let Enter select it, so 10 and 11 work
+                    // even when arrow keys are unavailable.
+                    typed.push(c);
+                    if typed.len() > 2 {
+                        typed.remove(0);
+                    }
+                    if let Ok(n) = typed.parse::<usize>() {
+                        if n >= 1 && n <= labels.len() {
+                            selected = n - 1;
+                            if caps.ansi {
+                                draw_choice(
+                                    &mut out, caps, title, labels, selected, false, &mut drawn,
+                                )?;
+                            }
+                        }
+                    }
+                } else {
+                    let n = c.to_digit(10).unwrap_or(0) as usize;
+                    let index = if n == 0 { 9 } else { n - 1 };
+                    if index < labels.len() {
+                        selected = index;
+                        finish_choice(&mut out, caps, title, labels, selected, &mut drawn)?;
+                        return Ok(selected);
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                typed.pop();
+                if let Ok(n) = typed.parse::<usize>() {
+                    if n >= 1 && n <= labels.len() {
+                        selected = n - 1;
+                        if caps.ansi {
+                            draw_choice(
+                                &mut out, caps, title, labels, selected, false, &mut drawn,
+                            )?;
+                        }
+                    }
                 }
             }
             KeyCode::Enter => {
+                if let Ok(n) = typed.parse::<usize>() {
+                    if n >= 1 && n <= labels.len() {
+                        selected = n - 1;
+                    }
+                }
                 finish_choice(&mut out, caps, title, labels, selected, &mut drawn)?;
                 return Ok(selected);
             }

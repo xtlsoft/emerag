@@ -89,7 +89,7 @@ paths. It has not been executed on a real Windows installation.
 
 | tier | language | size | certificates |
 | --- | --- | --- | --- |
-| nano | C89 | 58-82 KB | none, verification disabled |
+| nano | C89 | 44-83 KB | none, verification disabled |
 | lite | Rust | 530-630 KB | none, verification disabled |
 | full | Rust | 1.3-2.0 MB | 118-CA bundle, verification on |
 

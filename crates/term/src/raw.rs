@@ -178,6 +178,7 @@ mod platform {
     const ENABLE_ECHO_INPUT: u32 = 0x0004;
     const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
     const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
+    const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 0x0200;
     const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
 
     fn valid(h: Handle) -> bool {
@@ -208,15 +209,17 @@ mod platform {
                 | ENABLE_PROCESSED_INPUT
                 | ENABLE_QUICK_EDIT_MODE);
         new_input |= ENABLE_EXTENDED_FLAGS;
-        // Keep the console in key-event mode. ReadConsoleInputW already maps
-        // arrows correctly; enabling VIRTUAL_TERMINAL_INPUT here makes some
-        // Windows console hosts deliver a different event stream and can make
-        // arrow keys look like Esc/EOF.
+        new_input |= ENABLE_VIRTUAL_TERMINAL_INPUT;
         if unsafe { SetConsoleMode(input, new_input) } == 0 {
-            return Err(Error::new(format!(
-                "SetConsoleMode(input): {}",
-                std::io::Error::last_os_error()
-            )));
+            // Legacy consoles reject VT input. ReadConsoleInputW still works
+            // there; on ConPTY the VT byte stream is the fallback.
+            let fallback = new_input & !ENABLE_VIRTUAL_TERMINAL_INPUT;
+            if unsafe { SetConsoleMode(input, fallback) } == 0 {
+                return Err(Error::new(format!(
+                    "SetConsoleMode(input): {}",
+                    std::io::Error::last_os_error()
+                )));
+            }
         }
 
         // Best effort: make ANSI output work on Windows 10+ consoles. If the

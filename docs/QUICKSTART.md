@@ -28,7 +28,7 @@ If you have network but no patience:
 
 --run uses a writable tmpfs and leaves the root filesystem alone. If no
 curl/wget exists, busybox wget is used. --lite has no CA bundle and does not
-verify certificates; --nano is the 58-82 KB C client for Chat Completions
+verify certificates; --nano is the 44-83 KB C client for Chat Completions
 only, including Windows 98/2000/XP.
 
 ## 2. Connect a model (one time)

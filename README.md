@@ -39,7 +39,7 @@ when you need help most. emerag makes the opposite trade:
 - **Zero third-party crates.** The whole agent is Rust plus std, with
   hand-written TLS, HTTP, JSON, crypto, X.509 and a Lua-subset interpreter.
   Builds work offline and cross-compile to unusual targets.
-- **Small.** 1.3-2.0 MiB full, 530-630 KB lite, 58-82 KB nano; 3.2 MB RSS
+- **Small.** 1.3-2.0 MiB full, 530-630 KB lite, 44-83 KB nano; 3.2 MB RSS
   in normal use; no background
   threads when idle; no model weights in the agent process.
 - **Terminal-first.** VT100, serial consoles, 40-column windows, legacy
@@ -67,7 +67,7 @@ when you need help most. emerag makes the opposite trade:
 - **One-liner and RAM-only runs.** A POSIX/busybox installer downloads,
   verifies and installs, or executes from /dev/shm when the root filesystem is
   read-only.
-- **Three tiers.** Nano is a 58-82 KB C client (VC6, Windows 98/2000/XP,
+- **Three tiers.** Nano is a 44-83 KB C client (VC6, Windows 98/2000/XP,
   Chat Completions only, no certificates). Lite is the full Rust agent with
   no CA bundle and no certificate checks at **530-630 KB**. Full is the
   reference build with the 118-CA bundle at **1.3-2.0 MB**.

@@ -195,7 +195,7 @@ selected endpoint, so it appears under `/p` next time.
     # lite: 530-630 KB, no CA bundle, no certificate checks
     wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --lite
 
-    # nano: 58-82 KB C client, Chat Completions only
+    # nano: 44-83 KB C client, Chat Completions only
     wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --nano
 
 The installer needs one of curl, wget or busybox wget. It verifies SHA-256,

@@ -13,6 +13,15 @@
 #define NANO_MAX_MSGS 12
 #define NANO_SHELL_OUT 8192
 
+static void console_utf8(void) {
+#ifdef _WIN32
+    /* The CRT's console I/O uses the active code page. Without this, UTF-8
+     * replies print as mojibake and Chinese input reaches the API as GBK. */
+    SetConsoleCP(65001);
+    SetConsoleOutputCP(65001);
+#endif
+}
+
 typedef struct {
     char *role;
     char *content;
@@ -155,9 +164,14 @@ static char *json_string_after(const char *p, const char *key) {
 static char *extract_content(const char *json) {
     const char *msg = strstr(json, "\"message\"");
     char *p;
-    if (!msg) return NULL;
+    if (!msg) msg = json;
     p = json_string_after(msg, "\"content\"");
-    return p;
+    if (p && *p) return p;
+    if (p) nano_free(p);
+    /* Some gateways put the visible answer in reasoning_content and leave
+     * content empty. Do not discard a usable reply. */
+    p = json_string_after(msg, "\"reasoning_content\"");
+    return p ? p : xstrdup("");
 }
 
 static int dechunk(const u8 *in, size_t len, Buf *out) {
@@ -212,7 +226,7 @@ static int http_post(Tls *t, const char *host, const char *path,
     }
     sprintf(line, "Content-Length: %u\r\n", (unsigned)bodylen);
     buf_puts(&req, line);
-    buf_puts(&req, "Connection: close\r\n\r\n");
+    buf_puts(&req, "Connection: keep-alive\r\n\r\n");
     buf_put(&req, body, bodylen);
 
     if (tls_write(t, req.p, req.len) != 0) {
@@ -343,9 +357,27 @@ static const char *shell_command(const char *content) {
     return NULL;
 }
 
-static int chat_turn(Tls *t, const char *host, const char *path,
-                     const char *model, const char *key, Msg *msgs, int *nmsg,
-                     int ask, int allow_shell, int max_turns) {
+static int post_with_reconnect(Tls **tls, const char *host, const char *ip,
+                               int port, const char *path, const char *key,
+                               const char *body, size_t bodylen, Buf *response,
+                               char *err, size_t errlen) {
+    int rc = http_post(*tls, host, path, key, body, bodylen, response, err, errlen);
+    if (rc == 0) return 0;
+    /* Proxies and servers routinely close an HTTP/1.1 connection after one
+     * response even when keep-alive was requested. Reconnect and retry once
+     * instead of turning every later prompt into a TLS write failure. */
+    buf_free(response);
+    buf_init(response);
+    tls_close(*tls);
+    *tls = tls_connect(host, ip && *ip ? ip : NULL, port, err, errlen);
+    if (!*tls) return -1;
+    return http_post(*tls, host, path, key, body, bodylen, response, err, errlen);
+}
+
+static int chat_turn(Tls **tls, const char *host, const char *ip, int port,
+                     const char *path, const char *model, const char *key,
+                     Msg *msgs, int *nmsg, int ask, int allow_shell,
+                     int max_turns) {
     int turn;
     for (turn = 0; turn < max_turns; turn++) {
         Buf body, response, resp_body;
@@ -361,7 +393,9 @@ static int chat_turn(Tls *t, const char *host, const char *path,
         buf_free(&body);
 
         buf_init(&response);
-        if (http_post(t, host, path, key, (const char *)req.p, req.len, &response, err, sizeof(err)) != 0) {
+        if (post_with_reconnect(tls, host, ip, port, path, key,
+                                (const char *)req.p, req.len,
+                                &response, err, sizeof(err)) != 0) {
             buf_free(&req); buf_free(&response);
             fprintf(stderr, "emerag-nano: %s\n", err);
             return -1;
@@ -623,6 +657,7 @@ int main(int argc, char **argv) {
     Tls *tls;
     char err[256];
 
+    console_utf8();
     memset(msgs, 0, sizeof(msgs));
     if (getenv("EMERAG_API_KEY")) key = getenv("EMERAG_API_KEY");
     if (getenv("EMERAG_MODEL")) model = getenv("EMERAG_MODEL");
@@ -672,7 +707,8 @@ int main(int argc, char **argv) {
     msg_add(msgs, &nmsg, "system", SYSTEM_PROMPT);
     if (once) {
         msg_add(msgs, &nmsg, "user", once);
-        chat_turn(tls, host, path, model, key, msgs, &nmsg, ask, allow_shell, max_turns);
+        chat_turn(&tls, host, ip, port, path, model, key, msgs, &nmsg,
+                  ask, allow_shell, max_turns);
     } else {
         char line[4096];
         for (;;) {
@@ -718,7 +754,8 @@ int main(int argc, char **argv) {
                 continue;
             }
             msg_add(msgs, &nmsg, "user", line);
-            chat_turn(tls, host, path, model, key, msgs, &nmsg, ask, allow_shell, max_turns);
+            chat_turn(&tls, host, ip, port, path, model, key, msgs, &nmsg,
+                      ask, allow_shell, max_turns);
             if (nmsg >= NANO_MAX_MSGS - 1) {
                 /* keep system + last few */
                 while (nmsg > 4) {

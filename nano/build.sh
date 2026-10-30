@@ -18,6 +18,24 @@ else
 fi
 echo "linux: $(wc -c < "$DIST/emerag-nano-linux-x86_64") bytes"
 
+# Zig's bundled musl gives small static builds for the other Linux ABIs
+# without requiring a separate cross toolchain per architecture.
+if command -v zig >/dev/null 2>&1; then
+    for pair in \
+        "aarch64-linux-musl:emerag-nano-linux-aarch64" \
+        "arm-linux-musleabihf:emerag-nano-linux-armv7" \
+        "x86-linux-musl:emerag-nano-linux-i686" \
+        "riscv64-linux-musl:emerag-nano-linux-riscv64"
+    do
+        target="${pair%%:*}"
+        out="${pair##*:}"
+        zig cc -target "$target" -std=gnu89 -Os -static -Wall -Wextra \
+            -o "$DIST/$out" common.c crypto.c tls.c emerag.c \
+            || echo "zig failed: $target"
+        [ -f "$DIST/$out" ] && echo "$target: $(wc -c < "$DIST/$out") bytes"
+    done
+fi
+
 if command -v i686-w64-mingw32-gcc >/dev/null 2>&1; then
     i686-w64-mingw32-gcc -std=gnu89 -Os -Wall -Wextra \
         -o "$DIST/emerag-nano-windows-x86.exe" \

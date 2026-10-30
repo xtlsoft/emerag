@@ -490,14 +490,14 @@ thread_local! {
 pub fn read_key() -> Result<Key> {
     #[cfg(windows)]
     {
-        if emerag_util::sys::is_tty(0) {
-            match win::read_key() {
-                Ok(key) => return Ok(key),
-                Err(_) => {
-                    // Some console hosts hand us a handle that passes
-                    // GetConsoleMode but rejects ReadConsoleInputW. Fall back
-                    // to the byte decoder instead of terminating the TUI.
-                }
+        // Try the console record reader first, even when isatty() disagrees:
+        // ConPTY and some launchers expose a console handle that GetConsoleMode
+        // does not classify as a tty. ReadConsoleInputW fails harmlessly on a
+        // pipe, in which case the byte decoder below is still used.
+        match win::read_key() {
+            Ok(key) => return Ok(key),
+            Err(_) => {
+                // Fall back to the byte decoder instead of terminating the TUI.
             }
         }
     }

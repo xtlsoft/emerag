@@ -16,6 +16,10 @@ Linux/musl:
 
     ./build.sh
 
+This produces x86_64 with musl-gcc, and ARM64/ARMv7/i686/RISC-V static-musl
+builds when `zig` is in PATH. The GitHub Actions workflow does this
+automatically.
+
 Visual C++ 6.0 (Windows 98/2000/XP):
 
     build-vc6.bat

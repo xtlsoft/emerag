@@ -97,8 +97,14 @@ esac
 if [ "$OS" = "macos" ] && [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ]; then
     die "macOS is built for x86_64 and arm64 only"
 fi
-if [ "$BUILD" = "nano" ] && { [ "$OS" != "linux" ] || [ "$ARCH" != "x86_64" ]; }; then
-    die "nano is built for Linux x86_64 and Windows; use --lite on this platform"
+if [ "$BUILD" = "nano" ]; then
+    if [ "$OS" != "linux" ]; then
+        die "nano is built for Linux and Windows; use --lite on this platform"
+    fi
+    case "$ARCH" in
+        x86_64|aarch64|armv7|i686|riscv64) ;;
+        *) die "nano has no Linux build for $ARCH; use --lite" ;;
+    esac
 fi
 
 FILE="emerag-$OS-$ARCH"

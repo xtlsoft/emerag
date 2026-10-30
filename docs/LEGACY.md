@@ -40,17 +40,19 @@ The script builds both:
 
 ### Limitations
 
-- The rust9x toolchain is third-party and beta-quality. It is not installed in
-  the standard build environment, so these artifacts are not produced by the
-  normal release script and have not been runtime-tested on 98/2000 hardware
-  here.
+- The rust9x toolchain is third-party and beta-quality. GitHub Actions builds
+  i586/i686 full and lite artifacts with rust-lld and the MSVC SDK import
+  libraries from `xwin`; see `.github/workflows/build.yml`. They have not
+  been runtime-tested on 98/2000 hardware here.
 - Windows 95/98/ME have no system CSPRNG. The Rust port falls back to a mixed
   clock/process source and prints a warning. Windows 2000+ uses RtlGenRandom
   and does not take this path.
 - The full build verifies certificates, but the lite build does not. On a
   legacy machine without a correct clock, even full verification may fail.
 - A Rust9x build needs an MSVC-compatible linker and Windows import libraries.
-  See the upstream linux-msvc.md and rust9x-sample for the environment.
+  The CI recipe downloads the rust9x 1.99.1 toolchain and uses `rust-lld` plus
+  `xwin` MSVC CRT/SDK import libraries. `-Zunicows=no` is used, so Windows
+  2000/XP is the tested target class; Windows 9x may need MSLU.
 
 The native C nano build is the recommended path for a genuinely old machine:
 it has no Rust runtime, no TLS library, and no CA bundle at all.
