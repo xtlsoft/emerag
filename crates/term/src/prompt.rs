@@ -149,7 +149,9 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
     let mut selected = default;
     let mut drawn = 0usize;
     let mut typed = String::new();
-    draw_choice(&mut out, caps, title, labels, selected, true, &mut drawn)?;
+    draw_choice(
+        &mut out, caps, title, labels, selected, &typed, true, &mut drawn,
+    )?;
     loop {
         let key = match read_key() {
             Ok(key) => key,
@@ -166,28 +168,36 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
                     selected += 1;
                 }
                 if caps.ansi {
-                    draw_choice(&mut out, caps, title, labels, selected, false, &mut drawn)?;
+                    draw_choice(
+                        &mut out, caps, title, labels, selected, &typed, false, &mut drawn,
+                    )?;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp if !key.ctrl => {
                 typed.clear();
                 selected = selected.saturating_sub(1);
                 if caps.ansi {
-                    draw_choice(&mut out, caps, title, labels, selected, false, &mut drawn)?;
+                    draw_choice(
+                        &mut out, caps, title, labels, selected, &typed, false, &mut drawn,
+                    )?;
                 }
             }
             KeyCode::Home => {
                 typed.clear();
                 selected = 0;
                 if caps.ansi {
-                    draw_choice(&mut out, caps, title, labels, selected, false, &mut drawn)?;
+                    draw_choice(
+                        &mut out, caps, title, labels, selected, &typed, false, &mut drawn,
+                    )?;
                 }
             }
             KeyCode::End => {
                 typed.clear();
                 selected = labels.len() - 1;
                 if caps.ansi {
-                    draw_choice(&mut out, caps, title, labels, selected, false, &mut drawn)?;
+                    draw_choice(
+                        &mut out, caps, title, labels, selected, &typed, false, &mut drawn,
+                    )?;
                 }
             }
             KeyCode::Char(c) if c.is_ascii_digit() && !key.ctrl => {
@@ -205,35 +215,27 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
                     if let Ok(n) = typed.parse::<usize>() {
                         if n >= 1 && n <= labels.len() {
                             selected = n - 1;
-                            if caps.ansi {
-                                draw_choice(
-                                    &mut out, caps, title, labels, selected, false, &mut drawn,
-                                )?;
-                            }
                         }
                     }
+                    show_typed(&mut out, caps, title, labels, selected, &typed, &mut drawn)?;
                 } else {
                     let n = c.to_digit(10).unwrap_or(0) as usize;
                     let index = if n == 0 { 9 } else { n - 1 };
                     if index < labels.len() {
                         selected = index;
-                        finish_choice(&mut out, caps, title, labels, selected, &mut drawn)?;
+                        finish_choice(&mut out, caps, title, labels, selected, &typed, &mut drawn)?;
                         return Ok(selected);
                     }
                 }
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if !typed.is_empty() => {
                 typed.pop();
                 if let Ok(n) = typed.parse::<usize>() {
                     if n >= 1 && n <= labels.len() {
                         selected = n - 1;
-                        if caps.ansi {
-                            draw_choice(
-                                &mut out, caps, title, labels, selected, false, &mut drawn,
-                            )?;
-                        }
                     }
                 }
+                show_typed(&mut out, caps, title, labels, selected, &typed, &mut drawn)?;
             }
             KeyCode::Enter => {
                 if let Ok(n) = typed.parse::<usize>() {
@@ -241,7 +243,7 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
                         selected = n - 1;
                     }
                 }
-                finish_choice(&mut out, caps, title, labels, selected, &mut drawn)?;
+                finish_choice(&mut out, caps, title, labels, selected, &typed, &mut drawn)?;
                 return Ok(selected);
             }
             KeyCode::Esc => {
@@ -259,12 +261,14 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_choice<W: Write>(
     out: &mut W,
     caps: Capabilities,
     title: &str,
     labels: &[String],
     selected: usize,
+    typed: &str,
     first: bool,
     drawn: &mut usize,
 ) -> Result<()> {
@@ -277,7 +281,8 @@ fn draw_choice<W: Write>(
         lines.push(fit(caps, &line, width));
     }
     if labels.len() > 9 {
-        lines.push(fit(caps, "  type the number and press Enter", width));
+        let hint = format!("  type the number and press Enter: {typed}");
+        lines.push(fit(caps, &hint, width));
     }
     if !first && caps.ansi && *drawn > 0 {
         write!(out, "\x1b[{}A", *drawn).map_err(Error::from)?;
@@ -294,16 +299,38 @@ fn draw_choice<W: Write>(
     Ok(())
 }
 
+/// Show the number typed so far. With ANSI the whole menu is redrawn with the
+/// number on the hint line; without it (legacy Windows consoles, serial
+/// terminals) the menu cannot move, so the number is echoed on the line below
+/// it. Either way the user can see what Enter will select.
+fn show_typed<W: Write>(
+    out: &mut W,
+    caps: Capabilities,
+    title: &str,
+    labels: &[String],
+    selected: usize,
+    typed: &str,
+    drawn: &mut usize,
+) -> Result<()> {
+    if caps.ansi {
+        return draw_choice(out, caps, title, labels, selected, typed, false, drawn);
+    }
+    // Back to column 0, pad over a longer previous number, then print again.
+    write!(out, "\r> {typed}   \r> {typed}").map_err(Error::from)?;
+    out.flush().map_err(Error::from)
+}
+
 fn finish_choice<W: Write>(
     out: &mut W,
     caps: Capabilities,
     title: &str,
     labels: &[String],
     selected: usize,
+    typed: &str,
     drawn: &mut usize,
 ) -> Result<()> {
     if caps.ansi {
-        draw_choice(out, caps, title, labels, selected, false, drawn)?;
+        draw_choice(out, caps, title, labels, selected, typed, false, drawn)?;
     }
     out.write_all(b"\r\n").map_err(Error::from)?;
     out.flush().map_err(Error::from)
@@ -419,6 +446,32 @@ mod tests {
         let line = fit(caps, "a very long option that must be truncated", 20);
         assert!(display_width(&line) <= 20);
         assert!(line.is_ascii());
+    }
+
+    #[test]
+    fn typed_number_is_visible_with_and_without_ansi() {
+        let labels: Vec<String> = (1..=11).map(|i| format!("option {i}")).collect();
+        let mut drawn = 0;
+
+        let plain = Capabilities {
+            ansi: false,
+            ..Capabilities::default()
+        };
+        let mut out = Vec::new();
+        show_typed(&mut out, plain, "Pick", &labels, 10, "11", &mut drawn).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "\r> 11   \r> 11");
+
+        let vt = Capabilities {
+            ansi: true,
+            width: 80,
+            ..Capabilities::default()
+        };
+        let mut out = Vec::new();
+        draw_choice(&mut out, vt, "Pick", &labels, 0, "", true, &mut drawn).unwrap();
+        show_typed(&mut out, vt, "Pick", &labels, 10, "11", &mut drawn).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("type the number and press Enter: 11"));
+        assert!(text.contains("> 11. option 11"));
     }
 
     #[test]
