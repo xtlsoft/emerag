@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Test Rust workspace
-        run: cargo test --workspace
+        run: cargo test --workspace -- --test-threads=1
       - name: Build the debug binary used by e2e
         run: cargo build
       - name: End-to-end mock provider tests
@@ -165,7 +165,9 @@ jobs:
             ${{ matrix.cc }} -std=gnu89 -Os -Wall -Wextra \
               common.c crypto.c tls.c emerag.c -o "$out" -lws2_32 -ladvapi32
           fi
-          upx --best --lzma "$out"
+          # UPX 4.2 does not support RISC-V; the raw static binary is still
+          # small and remains a valid artifact.
+          upx --best --lzma "$out" || echo "upx skipped: $out"
         working-directory: nano
       - uses: actions/upload-artifact@v4
         with:
