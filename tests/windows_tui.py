@@ -18,17 +18,20 @@ def find_exe():
     return matches[0]
 
 
-def drain(proc, rounds=4):
-    out = []
-    for _ in range(rounds):
-        try:
-            chunk = proc.read(4096)
-        except EOFError:
-            break
-        if not chunk:
-            break
-        out.append(chunk)
-    return "".join(out)
+def drain(proc):
+    # pywinpty's read() blocks until data arrives. Never let a quiet prompt
+    # hang the CI job; take one non-blocking snapshot.
+    try:
+        return proc.read(65536, blocking=False)
+    except TypeError:
+        import threading
+        result = []
+        t = threading.Thread(target=lambda: result.append(proc.read(65536)), daemon=True)
+        t.start()
+        t.join(1.0)
+        return result[0] if result else ""
+    except EOFError:
+        return ""
 
 
 def main():

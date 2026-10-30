@@ -242,6 +242,7 @@ jobs:
 
   tui-windows:
     runs-on: windows-latest
+    timeout-minutes: 5
     needs: windows
     steps:
       - uses: actions/checkout@v4
