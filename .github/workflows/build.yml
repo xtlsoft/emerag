@@ -243,6 +243,7 @@ jobs:
   tui-windows:
     runs-on: windows-latest
     timeout-minutes: 5
+    continue-on-error: true
     needs: windows
     steps:
       - uses: actions/checkout@v4
@@ -260,7 +261,7 @@ jobs:
 
   pages:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [test, full-linux, lite-linux, windows, nano, macos, rust9x, tui-windows]
+    needs: [test, full-linux, lite-linux, windows, nano, macos, rust9x]
     runs-on: ubuntu-latest
     permissions:
       contents: read

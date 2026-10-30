@@ -488,6 +488,15 @@ thread_local! {
 /// proper arrow/function keys even without VT input support. On every other
 /// platform (and for redirected stdin) it reads bytes and runs [decode_keys].
 pub fn read_key() -> Result<Key> {
+    #[cfg(windows)]
+    {
+        // Native consoles give reliable arrow key records. Pipes (ConPTY)
+        // fail here and fall through to the byte decoder.
+        match win::read_key() {
+            Ok(key) => return Ok(key),
+            Err(_) => {}
+        }
+    }
     read_key_bytes()
 }
 
