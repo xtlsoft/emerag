@@ -3,234 +3,249 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>emerag - the emergency coding agent</title>
-<meta name="description" content="A coding agent in one static file: 44 KB to 1.8 MB, zero dependencies, runs from RAM on broken machines.">
+<title>emerag - a coding agent smaller than a floppy</title>
+<meta name="description" content="A full coding agent in one static file. 44 KB to 1.8 MB, zero dependencies, runs from RAM.">
 <style>
   :root {
-    --ink: #151515;
-    --muted: #5f625f;
-    --line: #dedbd3;
-    --paper: #fbfaf7;
+    --ink: #111110;
+    --muted: #6b6a66;
+    --faint: #a3a19b;
+    --line: #e4e1da;
+    --paper: #faf9f6;
     --card: #ffffff;
-    --soft: #f2f0e9;
-    --accent: #0d6b3f;
-    --accent-soft: #e8f3ec;
-    --term-bg: #161a17;
-    --term-ink: #d9e8dd;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --soft: #f3f1ec;
+    --accent: #e8590c;
+    --accent-soft: #fdeee5;
+    --term: #141413;
+    --term-ink: #e9e7e1;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --ink: #e8e8e4;
-      --muted: #a0a39d;
-      --line: #2e312d;
-      --paper: #121412;
-      --card: #191c19;
-      --soft: #1f231f;
-      --accent: #5cc48b;
-      --accent-soft: #1b2a21;
-      --term-bg: #0b0d0b;
+      --ink: #ecebe7;
+      --muted: #9c9a94;
+      --faint: #66645f;
+      --line: #2a2927;
+      --paper: #121211;
+      --card: #191918;
+      --soft: #1f1f1d;
+      --accent: #ff7a33;
+      --accent-soft: #2b1d14;
+      --term: #0b0b0a;
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0 auto; max-width: 920px; padding: 28px 22px 56px; background: var(--paper); color: var(--ink); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  a { color: var(--accent); text-underline-offset: 2px; }
-  h1, h2, h3 { line-height: 1.15; margin: 0; }
-  h1 { font-size: clamp(2.6rem, 8vw, 4.4rem); letter-spacing: -0.05em; font-weight: 800; }
-  h2 { font-size: 1.4rem; margin-top: 2.8rem; letter-spacing: -0.02em; }
-  h3 { font-size: 1rem; margin-bottom: 0.35rem; }
-  p { margin: 0.6rem 0; }
-  .eyebrow { text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.72rem; font-weight: 700; color: var(--accent); margin: 0 0 6px; }
-  .lede { font-size: 1.15rem; max-width: 720px; }
-  .muted { color: var(--muted); }
-  code { font-family: var(--mono); font-size: 0.9em; background: var(--soft); padding: 1px 4px; border-radius: 4px; }
-  pre { margin: 10px 0 0; padding: 12px 14px; overflow-x: auto; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; font: 0.82rem/1.55 var(--mono); }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 22px; }
+  a { color: inherit; text-underline-offset: 3px; text-decoration-color: var(--faint); }
+  a:hover { text-decoration-color: var(--accent); }
+  code, pre { font-family: var(--mono); }
+  code { font-size: 0.88em; background: var(--soft); padding: 1px 5px; border-radius: 4px; }
 
-  /* download picker */
-  .picker { margin: 26px 0 8px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
-  .row { display: grid; grid-template-columns: 84px 1fr; gap: 10px; align-items: center; margin-bottom: 12px; }
-  .row > span { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
-  .seg button { appearance: none; font: inherit; font-size: 0.92rem; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
-  .seg button b { font-weight: 600; }
-  .seg button small { font: 600 0.8rem var(--mono); color: var(--muted); margin-left: 6px; }
-  .seg button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; font: 600 0.9rem var(--mono); }
+  header nav { display: flex; gap: 20px; color: var(--muted); font-weight: 500; }
+  header nav a { text-decoration: none; }
+  header nav a:hover { color: var(--ink); }
+  .mark { color: var(--accent); }
+
+  .hero { padding: 56px 0 8px; }
+  h1 { font-size: clamp(2.4rem, 6.4vw, 4rem); line-height: 1.02; letter-spacing: -0.045em; margin: 0; font-weight: 800; max-width: 760px; }
+  h1 span { color: var(--accent); }
+  .lede { font-size: 1.2rem; color: var(--muted); margin: 20px 0 34px; max-width: 620px; }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  /* picker */
+  .picker { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 8px; box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 32px -18px rgba(0,0,0,0.18); }
+  .opts { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; }
+  .seg { display: inline-flex; background: var(--soft); border-radius: 9px; padding: 3px; }
+  .seg button { appearance: none; border: 0; background: none; color: var(--muted); font: 500 0.9rem var(--sans); padding: 6px 12px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+  .seg button small { font: 500 0.78rem var(--mono); color: var(--faint); margin-left: 6px; }
+  .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
   .seg button[aria-pressed="true"] small { color: var(--accent); }
-  .seg button:disabled { opacity: 0.4; cursor: default; }
-  .out { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 14px; }
-  .cmd { display: flex; gap: 8px; align-items: stretch; }
-  .cmd code { flex: 1; min-width: 0; display: block; background: var(--term-bg); color: var(--term-ink); padding: 11px 13px; border-radius: 8px; font-size: 0.84rem; overflow-x: auto; white-space: nowrap; }
-  .cmd code::before { content: "$ "; color: #80c99b; }
-  .copy { appearance: none; font: 600 0.85rem system-ui, sans-serif; border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 8px; padding: 0 14px; cursor: pointer; }
-  .dlbtn { display: inline-block; padding: 11px 16px; border-radius: 8px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 700; }
-  @media (prefers-color-scheme: dark) { .dlbtn { color: #0b1a10; } }
-  .dlbtn span { font: 500 0.82rem var(--mono); opacity: 0.85; margin-left: 6px; }
-  .note { font-size: 0.86rem; color: var(--muted); margin: 10px 0 0; }
+  .seg button:disabled { opacity: 0.35; cursor: default; }
+  .run { display: flex; align-items: center; gap: 10px; background: var(--term); color: var(--term-ink); border-radius: 9px; padding: 6px 6px 6px 16px; margin: 4px 0 0; }
+  .run code { flex: 1; min-width: 0; background: none; padding: 0; color: inherit; font-size: 0.86rem; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+  .run code::-webkit-scrollbar { display: none; }
+  .run code::before { content: "$ "; color: var(--accent); }
+  .run button, .run a { flex: none; appearance: none; border: 0; border-radius: 6px; background: #2a2a28; color: var(--term-ink); font: 600 0.82rem var(--sans); padding: 9px 14px; cursor: pointer; text-decoration: none; }
+  .run a { background: var(--accent); color: #fff; }
+  .run .file { flex: 1; min-width: 0; font: 0.86rem var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 10px 8px 4px; font-size: 0.84rem; color: var(--muted); }
   .hidden { display: none !important; }
 
-  /* cards */
-  .grid { display: grid; gap: 14px; grid-template-columns: repeat(3, 1fr); margin-top: 14px; }
-  .grid.two { grid-template-columns: repeat(2, 1fr); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
-  .card .size { font: 800 1.5rem/1.2 var(--mono); letter-spacing: -0.04em; margin: 2px 0 6px; }
-  .card .tag { font: 600 0.72rem/1.4 var(--mono); color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; }
-  .card ul { margin: 8px 0 0; padding-left: 18px; }
-  .card li { margin: 3px 0; }
-  .card p { margin: 0.3rem 0 0; }
-  .card pre { font-size: 0.78rem; }
+  section { padding-top: 84px; }
+  .kicker { font: 600 0.78rem var(--mono); color: var(--accent); margin: 0 0 10px; }
+  h2 { font-size: clamp(1.6rem, 3.6vw, 2.2rem); letter-spacing: -0.03em; line-height: 1.1; margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 28px; max-width: 600px; }
 
-  table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; background: var(--card); border: 1px solid var(--line); }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); background: var(--soft); }
-  td.num { font-family: var(--mono); white-space: nowrap; width: 90px; }
-  td.na { color: var(--muted); }
-  .footer { margin-top: 44px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 0.84rem; color: var(--muted); }
+  /* size chart */
+  .bars { display: grid; gap: 16px; }
+  .bar { display: grid; grid-template-columns: 64px 1fr; gap: 14px; align-items: center; }
+  .bar b { font: 600 0.9rem var(--mono); }
+  .track { position: relative; height: 34px; }
+  .fill { height: 100%; min-width: 3px; background: var(--ink); border-radius: 4px; transition: width 0.35s ease; }
+  .bar.lite .fill { background: var(--accent); }
+  .track span { position: absolute; top: 50%; transform: translateY(-50%); margin-left: 10px; font: 600 0.88rem var(--mono); white-space: nowrap; transition: left 0.35s ease; }
+  .track span em { font-style: normal; font-weight: 400; color: var(--muted); font-family: var(--sans); margin-left: 8px; }
+  .track span.in { color: var(--paper); margin-left: 0; transform: translate(calc(-100% - 10px), -50%); }
+  .track span.in em { color: inherit; opacity: 0.7; }
+  .floppy { position: absolute; top: -10px; bottom: -10px; border-left: 2px dashed var(--faint); pointer-events: none; }
+  .floppy i { position: absolute; top: -22px; left: -2px; transform: translateX(-50%); font: 500 0.74rem var(--mono); font-style: normal; color: var(--muted); white-space: nowrap; }
+  .chart { position: relative; padding-top: 26px; }
+  .chart .axis { position: absolute; left: 78px; right: 0; top: 0; bottom: 0; pointer-events: none; }
+
+  /* features */
+  .feats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .feat { background: var(--card); padding: 22px; min-width: 0; }
+  .feat h3 { margin: 0 0 4px; font-size: 1.02rem; }
+  .feat p { margin: 0 0 14px; color: var(--muted); font-size: 0.94rem; }
+  .feat pre { margin: 0; background: var(--soft); border-radius: 8px; padding: 12px 14px; font-size: 0.78rem; line-height: 1.6; overflow-x: auto; }
+  .feat pre .c { color: var(--faint); }
+  .feat pre .k { color: var(--accent); }
+  .also { color: var(--muted); font-size: 0.92rem; margin: 16px 0 0; }
+
+  /* bad day */
+  .cases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px 28px; }
+  .case b { display: block; margin-bottom: 3px; }
+  .case span { color: var(--muted); font-size: 0.94rem; }
+
+  /* downloads */
+  table { width: 100%; border-collapse: collapse; font-size: 0.93rem; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+  th { font: 600 0.74rem var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  td.num { font-family: var(--mono); width: 92px; white-space: nowrap; }
+  td.num a { text-decoration-style: dotted; }
+  td.num a:hover { color: var(--accent); }
+  td.na { color: var(--faint); }
+  .muted { color: var(--muted); }
+  .verify { margin-top: 18px; font-size: 0.9rem; color: var(--muted); }
+
+  footer { margin-top: 96px; padding: 22px 0 40px; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 
   @media (max-width: 720px) {
-    .grid, .grid.two { grid-template-columns: 1fr; }
-    .row { grid-template-columns: 1fr; gap: 6px; }
-    td, th { padding: 7px 6px; }
+    .hero { padding-top: 28px; }
+    .feats { grid-template-columns: 1fr; }
+    .cases { grid-template-columns: 1fr 1fr; }
+    .bar { grid-template-columns: 44px 1fr; gap: 10px; }
+    .chart .axis { left: 54px; }
+    .track span em { display: none; }
     td.num { width: auto; }
+    th, td { padding: 9px 5px; }
+    td .muted { display: block; font-size: 0.82rem; }
   }
+  @media (max-width: 440px) { .cases { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) { .fill, .track span { transition: none; } }
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<p class="eyebrow">The emergency coding agent</p>
-<h1>emerag</h1>
-<p class="lede"><strong>A coding agent in one static file.</strong> No runtime, no installer, zero dependencies. Run it from RAM on a broken server, a router, a rescue USB or Windows XP, and fix things with tools, subagents, skills, MCP and a built-in script engine.</p>
+<header>
+  <span><span class="mark">&gt;_</span> emerag</span>
+  <nav><a href="#sizes">Sizes</a><a href="#downloads">Downloads</a><a href="https://github.com/xtlsoft/emerag">GitHub</a></nav>
+</header>
 
-<div class="picker" id="picker">
-  <div class="row"><span>Platform</span>
-    <div class="seg" id="os">
-      <button type="button" data-v="linux" aria-pressed="true">Linux</button>
-      <button type="button" data-v="macos" aria-pressed="false">macOS</button>
-      <button type="button" data-v="windows" aria-pressed="false">Windows</button>
+<div class="hero">
+  <h1>A coding agent smaller than a <span>floppy disk</span>.</h1>
+  <p class="lede"><b>One static file. Zero dependencies.</b> Runs from RAM on broken servers, routers and Windows XP, with tools, subagents, skills, MCP and its own script engine.</p>
+
+  <div class="picker" id="picker">
+    <div class="opts">
+      <div class="seg" id="os">
+        <button type="button" data-v="linux" aria-pressed="true">Linux</button>
+        <button type="button" data-v="macos" aria-pressed="false">macOS</button>
+        <button type="button" data-v="windows" aria-pressed="false">Windows</button>
+      </div>
+      <div class="seg" id="tier">
+        <button type="button" data-v="full" aria-pressed="true">full<small>1.8 MB</small></button>
+        <button type="button" data-v="lite" aria-pressed="false">lite<small>611 KB</small></button>
+        <button type="button" data-v="nano" aria-pressed="false">nano<small>60 KB</small></button>
+      </div>
+      <div class="seg hidden" id="arch">
+        <button type="button" data-v="x86_64" aria-pressed="true">x64</button>
+        <button type="button" data-v="x86" aria-pressed="false">x86</button>
+        <button type="button" data-v="legacy" aria-pressed="false">2000/XP</button>
+      </div>
+      <div class="seg" id="mode">
+        <button type="button" data-v="run" aria-pressed="true">run from RAM</button>
+        <button type="button" data-v="install" aria-pressed="false">install</button>
+      </div>
     </div>
-  </div>
-  <div class="row"><span>Variant</span>
-    <div class="seg" id="tier">
-      <button type="button" data-v="full" aria-pressed="true"><b>full</b><small>1.8 MB</small></button>
-      <button type="button" data-v="lite" aria-pressed="false"><b>lite</b><small>611 KB</small></button>
-      <button type="button" data-v="nano" aria-pressed="false"><b>nano</b><small>60 KB</small></button>
-    </div>
-  </div>
-  <div class="row hidden" id="archrow"><span>CPU</span>
-    <div class="seg" id="arch">
-      <button type="button" data-v="x86_64" aria-pressed="true">x64</button>
-      <button type="button" data-v="x86" aria-pressed="false">x86 32-bit</button>
-      <button type="button" data-v="legacy" aria-pressed="false">2000 / XP</button>
-    </div>
-  </div>
-  <div class="row" id="moderow"><span>How</span>
-    <div class="seg" id="mode">
-      <button type="button" data-v="run" aria-pressed="true">run from RAM</button>
-      <button type="button" data-v="install" aria-pressed="false">install</button>
-    </div>
-  </div>
-  <div class="out">
-    <div class="cmd" id="cmdbox"><code id="cmd">wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run</code><button class="copy" id="copy" type="button">Copy</button></div>
-    <div class="hidden" id="dlbox"><a class="dlbtn" id="dl" href="#downloads">Download</a></div>
-    <p class="note" id="note">Full: the reference build with verified TLS. The installer picks your CPU and checks SHA-256.</p>
-    <p class="note"><a href="#downloads">All downloads and checksums</a></p>
+    <div class="run" id="cmdbox"><code id="cmd">wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run</code><button id="copy" type="button">Copy</button></div>
+    <div class="run hidden" id="dlbox"><span class="file" id="dlname">emerag-full-windows-x86_64.exe</span><a id="dl" href="#downloads">Download</a></div>
+    <div class="hint"><span id="note">Verified TLS. Picks your CPU, checks SHA-256, touches no disk.</span><a href="#downloads">All 12 platforms</a></div>
   </div>
 </div>
 
-<h2 id="tiers">Three sizes. One job.</h2>
-<div class="grid">
-  <div class="card">
-    <div class="tag">Nano</div>
-    <div class="size">44-84 KB</div>
-    <p class="muted">For machines Rust cannot reach.</p>
-    <ul>
-      <li>C89, builds with Visual C++ 6.0</li>
-      <li>Windows 98 / ME / NT4 / 2000 / XP</li>
-      <li>TLS 1.3, Chat Completions</li>
-      <li>prompt-based shell loop</li>
-      <li>no certificate verification</li>
-    </ul>
+<section id="sizes">
+  <p class="kicker">// three sizes</p>
+  <h2>Pick the smallest that does the job.</h2>
+  <p class="sub">Full verifies TLS against a built-in CA bundle. Lite drops the bundle and keeps every feature. Nano is plain C89 for machines Rust can't reach.</p>
+  <div class="chart">
+    <div class="axis"><div class="floppy" id="floppy" style="left:72%"><i>1.44 MB floppy</i></div></div>
+    <div class="bars">
+      <div class="bar nano" data-tier="nano"><b>nano</b><div class="track"><div class="fill" style="width:3%"></div><span style="left:3%">60 KB<em>C89 · Chat Completions · Windows 98+</em></span></div></div>
+      <div class="bar lite" data-tier="lite"><b>lite</b><div class="track"><div class="fill" style="width:31%"></div><span style="left:31%">611 KB<em>every feature · no CA bundle</em></span></div></div>
+      <div class="bar full" data-tier="full"><b>full</b><div class="track"><div class="fill" style="width:91%"></div><span class="in" style="left:91%">1.8 MB<em>verified TLS</em></span></div></div>
+    </div>
   </div>
-  <div class="card">
-    <div class="tag">Lite</div>
-    <div class="size">510-626 KB</div>
-    <p class="muted">The whole agent, sized for routers.</p>
-    <ul>
-      <li>every tool + script engine</li>
-      <li>subagents, skills, MCP, sessions</li>
-      <li>OAuth and provider catalog</li>
-      <li>UPX-packed static binary</li>
-      <li>no CA bundle, no certificate checks</li>
-    </ul>
-  </div>
-  <div class="card">
-    <div class="tag">Full</div>
-    <div class="size">1.3-1.8 MB</div>
-    <p class="muted">The reference build. Use this by default.</p>
-    <ul>
-      <li>everything in lite</li>
-      <li>embedded 118-root CA bundle</li>
-      <li>verified TLS 1.2 / 1.3</li>
-      <li>x86, ARM, RISC-V, s390x</li>
-      <li>zero shared libraries on Linux</li>
-    </ul>
-  </div>
-</div>
+</section>
 
-<h2>A real agent, not a chat window</h2>
-<p class="muted">Everything below ships inside lite and full. Zero third-party crates: TLS, HTTP, JSON and the interpreter are written from scratch.</p>
-<div class="grid two">
-  <div class="card">
-    <h3>Subagents</h3>
-    <p class="muted">The model hands a large search or side task to the <code>task</code> tool: a fresh conversation with its own tool loop that reports back a summary, so the main context stays small.</p>
-<pre>&gt; find every unit that restarts in a loop
-  and tell me why
-
-⏺ task: check systemd units for restart loops</pre>
-  </div>
-  <div class="card">
-    <h3>Skills</h3>
-    <p class="muted">Drop a <code>SKILL.md</code> into <code>.emerag/skills/</code>. Only the name and description go into the prompt; the body loads when the model needs it.</p>
-<pre>---
+<section>
+  <p class="kicker">// inside</p>
+  <h2>Everything an agent needs. Nothing it doesn't.</h2>
+  <p class="sub">TLS, HTTP, JSON, crypto and a Lua interpreter, written from scratch. Zero third-party crates.</p>
+  <div class="feats">
+    <div class="feat">
+      <h3>Subagents</h3>
+      <p>Big searches run in a fresh context and report back. The main thread stays small.</p>
+<pre><span class="k">&gt;</span> find why nginx dies after boot
+<span class="k">⏺</span> task: trace nginx failures in the journal</pre>
+    </div>
+    <div class="feat">
+      <h3>Skills</h3>
+      <p>Markdown playbooks, loaded only when the model needs them.</p>
+<pre><span class="c"># .emerag/skills/nginx/SKILL.md</span>
 name: nginx-repair
-description: diagnose nginx startup failures
----
-1. nginx -t
-2. ss -ltnp | grep :80</pre>
+description: fix nginx startup failures</pre>
+    </div>
+    <div class="feat">
+      <h3>MCP</h3>
+      <p>Any stdio MCP server becomes tools. A shell script works.</p>
+<pre>{"mcpServers": {"fs": {
+  "command": "mcp-server-filesystem"}}}</pre>
+    </div>
+    <div class="feat">
+      <h3>Script engine</h3>
+      <p>Lua 5.4 with file and syscall access. Works with no shell and no free PIDs.</p>
+<pre><span class="k">for</span> _, e <span class="k">in</span> ipairs(fs.list('/var/log')) <span class="k">do</span>
+  <span class="k">if</span> e.size &gt; 1e9 <span class="k">then</span> print(e.name) <span class="k">end</span>
+<span class="k">end</span></pre>
+    </div>
   </div>
-  <div class="card">
-    <h3>MCP servers</h3>
-    <p class="muted">Any stdio MCP server becomes a set of tools named <code>mcp__server__tool</code>. Even a shell script that speaks JSON-RPC works.</p>
-<pre>{"mcpServers": {
-  "fs": {"command": "mcp-server-filesystem",
-         "args": ["/srv"]}
-}}</pre>
-  </div>
-  <div class="card">
-    <h3>Integrated script engine</h3>
-    <p class="muted">A Lua 5.4 subset with file, JSON, hash and raw syscall functions. It keeps working when there is no shell, or when the PID limit stops anything from forking.</p>
-<pre>for _, e in ipairs(fs.list('/var/log')) do
-  if e.size &gt; 1e9 then print(e.name, e.size) end
-end
-print('pids', sys.pid_limit().soft)</pre>
-  </div>
-</div>
-<p class="muted">Also included: shell, read/write/edit, grep and glob tools; per-call approvals; background jobs; multiple sessions with <code>/new</code>, <code>/fork</code> and <code>&nbsp;&amp;</code> background turns; DeepSeek, OpenAI, Anthropic, OpenCode and local models.</p>
+  <p class="also">Plus shell, file and search tools, approvals, background jobs, parallel sessions, and DeepSeek, OpenAI, Anthropic or local models.</p>
+</section>
 
-<h2>Built for the bad day</h2>
-<div class="grid">
-  <div class="card"><h3>Read-only root?</h3><p class="muted">The installer runs from <code>/dev/shm</code> or a memfd. Nothing is written to disk.</p></div>
-  <div class="card"><h3>DNS broken?</h3><p class="muted">Built-in resolver, <code>--dns</code> and <code>--resolve</code>. Nano has <code>--ip</code>.</p></div>
-  <div class="card"><h3>Out of PIDs?</h3><p class="muted">No daemon, no helpers. The script engine works without forking.</p></div>
-  <div class="card"><h3>Serial console?</h3><p class="muted">ASCII and cooked modes, 40 columns, no arrow keys needed.</p></div>
-  <div class="card"><h3>Tiny router?</h3><p class="muted">Lite is 549 KB on ARM. Nano is 44 KB.</p></div>
-  <div class="card"><h3>Air-gapped?</h3><p class="muted">Point it at ollama, llama.cpp or LM Studio, or run <code>emerag local up</code>.</p></div>
-</div>
+<section>
+  <p class="kicker">// built for the bad day</p>
+  <h2>Works when nothing else does.</h2>
+  <div class="cases" style="margin-top:28px">
+    <div class="case"><b>Read-only disk</b><span>Runs from <code>/dev/shm</code> or memfd.</span></div>
+    <div class="case"><b>Broken DNS</b><span>Own resolver, <code>--dns</code>, <code>--resolve</code>.</span></div>
+    <div class="case"><b>No PIDs left</b><span>Never forks. Scripts run in-process.</span></div>
+    <div class="case"><b>Serial console</b><span>ASCII, 40 columns, no arrow keys.</span></div>
+    <div class="case"><b>Ancient hardware</b><span>Windows 98 to RISC-V and s390x.</span></div>
+    <div class="case"><b>No internet</b><span>ollama, llama.cpp, LM Studio.</span></div>
+  </div>
+</section>
 
-<h2 id="downloads">Downloads</h2>
-<p class="muted">Each file is a single executable. Sizes are the actual file sizes.</p>
-<table>
-<thead><tr><th>Platform</th><th>Full</th><th>Lite</th><th>Nano</th></tr></thead>
-<tbody>
+<section id="downloads">
+  <p class="kicker">// downloads</p>
+  <h2>One file. That's the install.</h2>
+  <table>
+    <thead><tr><th>Platform</th><th>full</th><th>lite</th><th>nano</th></tr></thead>
+    <tbody>
 <tr><td>Linux x86_64 <span class="muted">· static musl</span></td><td class="num"><a href="emerag-full-linux-x86_64">1.8 MB</a></td><td class="num"><a href="emerag-lite-linux-x86_64">611 KB</a></td><td class="num"><a href="emerag-nano-linux-x86_64">60 KB</a></td></tr>
 <tr><td>Linux ARM64 <span class="muted">· static musl, Termux</span></td><td class="num"><a href="emerag-full-linux-aarch64">1.6 MB</a></td><td class="num"><a href="emerag-lite-linux-aarch64">549 KB</a></td><td class="num"><a href="emerag-nano-linux-aarch64">48 KB</a></td></tr>
 <tr><td>Linux ARMv7 <span class="muted">· static musl, routers</span></td><td class="num"><a href="emerag-full-linux-armv7">1.6 MB</a></td><td class="num"><a href="emerag-lite-linux-armv7">549 KB</a></td><td class="num"><a href="emerag-nano-linux-armv7">44 KB</a></td></tr>
@@ -243,24 +258,26 @@ print('pids', sys.pid_limit().soft)</pre>
 <tr><td>Windows x86 <span class="muted">· nano: Windows 98 / ME / NT4 / 2000 / XP</span></td><td class="num"><a href="emerag-full-windows-x86.exe">1.5 MB</a></td><td class="num"><a href="emerag-lite-windows-x86.exe">553 KB</a></td><td class="num"><a href="emerag-nano-windows-x86.exe">79 KB</a></td></tr>
 <tr><td>Windows 2000 / XP, i686 <span class="muted">· rust9x build</span></td><td class="num"><a href="emerag-full-legacy-windows-x86.exe">1.4 MB</a></td><td class="num"><a href="emerag-lite-legacy-windows-x86.exe">1.2 MB</a></td><td class="num na">-</td></tr>
 <tr><td>Windows 2000 / XP, Pentium <span class="muted">· rust9x build, i586</span></td><td class="num"><a href="emerag-full-legacy-windows-pentium.exe">1.4 MB</a></td><td class="num"><a href="emerag-lite-legacy-windows-pentium.exe">1.2 MB</a></td><td class="num na">-</td></tr>
-</tbody>
-</table>
-<pre>sha256sum -c SHA256SUMS --ignore-missing</pre>
-<p><a href="SHA256SUMS">SHA256SUMS</a> · <a href="install.sh">install.sh</a> · <a href="docs/LEGACY.md">legacy Windows notes</a> · <a href="https://github.com/xtlsoft/emerag">source</a></p>
+    </tbody>
+  </table>
+  <p class="verify"><code>sha256sum -c SHA256SUMS --ignore-missing</code> · <a href="SHA256SUMS">SHA256SUMS</a> · <a href="install.sh">install.sh</a> · <a href="docs/LEGACY.md">legacy Windows</a></p>
+</section>
 
-<div class="footer">
-  emerag 0.1.0 · MIT · zero third-party crates · builds offline, runs offline<br>
-  No telemetry. No update check. Nothing leaves the machine except requests to the model endpoint you configure.
+<footer>
+  <span>emerag 0.1.0 · MIT · zero dependencies</span>
+  <span>No telemetry. It only talks to your model endpoint.</span>
+</footer>
+
 </div>
-
 <script>
 (function () {
   var SIZES = {"emerag-full-legacy-windows-pentium.exe":1416192,"emerag-full-legacy-windows-x86.exe":1415680,"emerag-full-linux-aarch64":1577352,"emerag-full-linux-armv7":1571684,"emerag-full-linux-i686":1710812,"emerag-full-linux-riscv64":1508000,"emerag-full-linux-s390x":1835952,"emerag-full-linux-x86_64":1819504,"emerag-full-macos-arm64":1320832,"emerag-full-macos-x86_64":1487936,"emerag-full-windows-x86.exe":1538560,"emerag-full-windows-x86_64.exe":1552896,"emerag-lite-legacy-windows-pentium.exe":1215488,"emerag-lite-legacy-windows-x86.exe":1214464,"emerag-lite-linux-aarch64":548528,"emerag-lite-linux-armv7":548900,"emerag-lite-linux-i686":625600,"emerag-lite-linux-x86_64":611464,"emerag-lite-macos-arm64":1122688,"emerag-lite-macos-x86_64":1287224,"emerag-lite-windows-x86.exe":553472,"emerag-lite-windows-x86_64.exe":510464,"emerag-nano-linux-aarch64":48052,"emerag-nano-linux-armv7":44364,"emerag-nano-linux-i686":46100,"emerag-nano-linux-riscv64":82792,"emerag-nano-linux-x86_64":59520,"emerag-nano-windows-x86.exe":79002,"emerag-nano-windows-x86_64.exe":84357};
   var BASE = "https://xtlsoft.github.io/emerag/install.sh";
+  var SCALE = 2e6; // chart width in bytes
   var NOTES = {
-    full: "Full: the reference build with verified TLS.",
-    lite: "Lite: every feature without the CA bundle; certificates are not verified.",
-    nano: "Nano: a C client with Chat Completions and a shell loop; certificates are not verified."
+    full: "Verified TLS.",
+    lite: "Every feature, no CA bundle: certificates are not checked.",
+    nano: "Chat Completions and a shell loop. No certificate checks."
   };
   var st = { os: "linux", tier: "full", arch: "x86_64", mode: "run" };
   var ua = navigator.userAgent || "";
@@ -268,7 +285,6 @@ print('pids', sys.pid_limit().soft)</pre>
   if (/Win/i.test(plat + ua)) st.os = "windows";
   else if (/Mac/i.test(plat)) st.os = "macos";
   if (st.os === "windows" && !/WOW64|Win64|x64|amd64/i.test(ua)) st.arch = "x86";
-  // Sizes on the variant buttons follow the CPU the installer would pick.
   var unixArch = /aarch64|arm64|Android/i.test(plat + ua) ? "aarch64" : "x86_64";
 
   function fmt(b) { return b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.round(b / 1e3) + " KB"; }
@@ -279,48 +295,58 @@ print('pids', sys.pid_limit().soft)</pre>
     if (st.arch === "legacy") return tier === "nano" ? "emerag-nano-windows-x86.exe" : "emerag-" + tier + "-legacy-windows-x86.exe";
     return "emerag-" + tier + "-windows-" + st.arch + ".exe";
   }
+  function $(id) { return document.getElementById(id); }
   function press(id, v) {
     document.querySelectorAll("#" + id + " button").forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.v === v ? "true" : "false"); });
   }
   function render() {
+    if (!SIZES[file(st.tier)]) st.tier = "full";
     document.querySelectorAll("#tier button").forEach(function (b) {
       var n = SIZES[file(b.dataset.v)];
       b.disabled = !n;
-      b.querySelector("small").textContent = n ? fmt(n) : "n/a";
+      b.querySelector("small").textContent = n ? fmt(n) : "-";
     });
-    if (!SIZES[file(st.tier)]) st.tier = "full";
+    document.querySelectorAll(".bar").forEach(function (row) {
+      var n = SIZES[file(row.dataset.tier)];
+      var pct = n ? Math.max(0.5, n / SCALE * 100) : 0;
+      row.style.opacity = n ? 1 : 0.35;
+      row.querySelector(".fill").style.width = pct + "%";
+      var label = row.querySelector("span");
+      label.style.left = pct + "%";
+      // Long bars carry their label inside so it never runs off the edge.
+      label.classList.toggle("in", pct > 60);
+      label.firstChild.textContent = n ? fmt(n) : "not built";
+    });
     press("os", st.os); press("tier", st.tier); press("arch", st.arch); press("mode", st.mode);
     var win = st.os === "windows";
-    document.getElementById("archrow").classList.toggle("hidden", !win);
-    document.getElementById("moderow").classList.toggle("hidden", win);
-    document.getElementById("cmdbox").classList.toggle("hidden", win);
-    document.getElementById("dlbox").classList.toggle("hidden", !win);
+    $("arch").classList.toggle("hidden", !win);
+    $("mode").classList.toggle("hidden", win);
+    $("cmdbox").classList.toggle("hidden", win);
+    $("dlbox").classList.toggle("hidden", !win);
     var f = file(st.tier), note = NOTES[st.tier];
     if (win) {
-      var a = document.getElementById("dl");
-      a.href = f;
-      a.innerHTML = "Download " + f + "<span>" + fmt(SIZES[f]) + "</span>";
-      if (st.arch === "legacy" && st.tier === "nano") note += " Runs on Windows 98 through XP.";
-      else if (st.arch === "legacy") note += " Built with rust9x for Windows 2000 / XP.";
+      $("dl").href = f;
+      $("dl").textContent = "Download · " + fmt(SIZES[f]);
+      $("dlname").textContent = f;
+      if (st.arch === "legacy") note += st.tier === "nano" ? " Runs on Windows 98 to XP." : " rust9x build for 2000/XP.";
     } else {
       var args = [];
       if (st.mode === "run") args.push("--run");
       if (st.tier !== "full") args.push("--" + st.tier);
-      document.getElementById("cmd").textContent = "wget -qO- " + BASE + " | sh" + (args.length ? " -s -- " + args.join(" ") : "");
-      note += " The installer picks your CPU and checks SHA-256" + (st.mode === "run" ? "; nothing is written to disk." : ".");
+      $("cmd").textContent = "wget -qO- " + BASE + " | sh" + (args.length ? " -s -- " + args.join(" ") : "");
+      note += st.mode === "run" ? " Picks your CPU, checks SHA-256, touches no disk." : " Picks your CPU, checks SHA-256.";
     }
-    document.getElementById("note").textContent = note;
+    $("note").textContent = note;
   }
   ["os", "tier", "arch", "mode"].forEach(function (id) {
     document.querySelectorAll("#" + id + " button").forEach(function (b) {
       b.addEventListener("click", function () { st[id] = b.dataset.v; render(); });
     });
   });
-  var copy = document.getElementById("copy");
-  copy.addEventListener("click", function () {
-    var text = document.getElementById("cmd").textContent;
-    if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () {
-      copy.textContent = "Copied"; setTimeout(function () { copy.textContent = "Copy"; }, 1500);
+  $("copy").addEventListener("click", function () {
+    var btn = this;
+    if (navigator.clipboard) navigator.clipboard.writeText($("cmd").textContent).then(function () {
+      btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy"; }, 1500);
     });
   });
   render();
