@@ -22,6 +22,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Test Rust workspace
         run: cargo test --workspace
+      - name: Build the debug binary used by e2e
+        run: cargo build
       - name: End-to-end mock provider tests
         run: ./tests/e2e.sh
       - name: Test C crypto vectors
