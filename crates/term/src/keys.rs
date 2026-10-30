@@ -19,7 +19,7 @@
 
 use core::cell::RefCell;
 use std::collections::VecDeque;
-use std::io::Read;
+use std::sync::{mpsc, Mutex, OnceLock};
 
 use crate::{Error, Result};
 
@@ -564,6 +564,31 @@ fn read_stdin_raw(buf: &mut [u8]) -> std::io::Result<usize> {
     std::io::stdin().read(buf)
 }
 
+fn raw_receiver() -> &'static Mutex<mpsc::Receiver<u8>> {
+    static RX: OnceLock<Mutex<mpsc::Receiver<u8>>> = OnceLock::new();
+    RX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 64];
+            loop {
+                match read_stdin_raw(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        for b in &buf[..n] {
+                            if tx.send(*b).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+        Mutex::new(rx)
+    })
+}
+
 #[cfg(unix)]
 fn input_ready(wait_ms: i32) -> bool {
     #[repr(C)]
@@ -639,28 +664,25 @@ fn read_key_bytes() -> Result<Key> {
         if let Some(key) = QUEUE.with(|q| q.borrow_mut().pop_front()) {
             return Ok(key);
         }
-        let mut buf = [0u8; 64];
-        let mut n = read_stdin_raw(&mut buf).map_err(Error::from)?;
-        if n == 0 {
-            return Err(Error::end_of_input());
-        }
-        // ESC is both the Esc key and the prefix of every VT arrow/function
-        // sequence. Pipes and ConPTY can split the sequence across reads; a
-        // lone ESC must not cancel the wizard before the rest arrives.
-        let pending_empty = PENDING.with(|p| p.borrow().is_empty());
-        if n == 1 && buf[0] == 0x1b && pending_empty {
-            if !input_ready(250) {
-                return Ok(Key::new(KeyCode::Esc));
+        let rx = raw_receiver().lock().unwrap();
+        let first = match rx.recv() {
+            Ok(b) => b,
+            Err(_) => return Err(Error::end_of_input()),
+        };
+        let mut buf = vec![first];
+        // A pipe/ConPTY can return ESC alone and the rest of a VT sequence in
+        // a later read. Collect any bytes that follow promptly; a real Esc
+        // key only costs this short delay.
+        let wait_ms = if first == 0x1b { 250 } else { 2 };
+        while buf.len() < 64 {
+            match rx.recv_timeout(std::time::Duration::from_millis(wait_ms)) {
+                Ok(b) => buf.push(b),
+                Err(_) => break,
             }
-            let more = read_stdin_raw(&mut buf[1..]).map_err(Error::from)?;
-            if more == 0 {
-                return Ok(Key::new(KeyCode::Esc));
-            }
-            n += more;
         }
         let keys = PENDING.with(|p| {
             let mut p = p.borrow_mut();
-            decode_keys(&buf[..n], &mut p)
+            decode_keys(&buf, &mut p)
         });
         if keys.is_empty() {
             continue;
