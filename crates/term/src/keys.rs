@@ -504,15 +504,68 @@ pub fn read_key() -> Result<Key> {
     read_key_bytes()
 }
 
+#[cfg(unix)]
+fn input_ready(wait_ms: i32) -> bool {
+    #[repr(C)]
+    struct PollFd {
+        fd: i32,
+        events: i16,
+        revents: i16,
+    }
+    extern "C" {
+        fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
+    }
+    let mut p = PollFd {
+        fd: 0,
+        events: 1, // POLLIN
+        revents: 0,
+    };
+    unsafe { poll(&mut p, 1, wait_ms) > 0 }
+}
+
+#[cfg(windows)]
+fn input_ready(wait_ms: i32) -> bool {
+    use core::ffi::c_void;
+    type Handle = *mut c_void;
+    extern "system" {
+        fn GetStdHandle(which: u32) -> Handle;
+        fn WaitForSingleObject(handle: Handle, ms: u32) -> u32;
+    }
+    let h = unsafe { GetStdHandle(0xFFFF_FFF6) };
+    if h.is_null() || h as isize == -1 {
+        return false;
+    }
+    unsafe { WaitForSingleObject(h, wait_ms.max(0) as u32) == 0 }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn input_ready(_wait_ms: i32) -> bool {
+    false
+}
+
 fn read_key_bytes() -> Result<Key> {
     loop {
         if let Some(key) = QUEUE.with(|q| q.borrow_mut().pop_front()) {
             return Ok(key);
         }
         let mut buf = [0u8; 64];
-        let n = std::io::stdin().read(&mut buf).map_err(Error::from)?;
+        let mut n = std::io::stdin().read(&mut buf).map_err(Error::from)?;
         if n == 0 {
             return Err(Error::end_of_input());
+        }
+        // ESC is both the Esc key and the prefix of every VT arrow/function
+        // sequence. Pipes and ConPTY can split the sequence across reads; a
+        // lone ESC must not cancel the wizard before the rest arrives.
+        let pending_empty = PENDING.with(|p| p.borrow().is_empty());
+        if n == 1 && buf[0] == 0x1b && pending_empty {
+            if !input_ready(60) {
+                return Ok(Key::new(KeyCode::Esc));
+            }
+            let more = std::io::stdin().read(&mut buf[1..]).map_err(Error::from)?;
+            if more == 0 {
+                return Ok(Key::new(KeyCode::Esc));
+            }
+            n += more;
         }
         let keys = PENDING.with(|p| {
             let mut p = p.borrow_mut();
