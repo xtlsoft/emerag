@@ -590,10 +590,41 @@ fn input_ready(wait_ms: i32) -> bool {
     extern "system" {
         fn GetStdHandle(which: u32) -> Handle;
         fn WaitForSingleObject(handle: Handle, ms: u32) -> u32;
+        fn GetNumberOfConsoleInputEvents(handle: Handle, count: *mut u32) -> i32;
+        fn PeekNamedPipe(
+            handle: Handle,
+            buffer: *mut c_void,
+            len: u32,
+            read: *mut u32,
+            available: *mut u32,
+            left: *mut u32,
+        ) -> i32;
     }
     let h = unsafe { GetStdHandle(0xFFFF_FFF6) };
     if h.is_null() || h as isize == -1 {
         return false;
+    }
+    // ConPTY can expose stdin as a pipe; a console exposes input events.
+    // Waiting alone is not reliable for both, and checking first avoids a
+    // 250 ms delay when the rest of ESC [ A is already buffered.
+    let mut count = 0u32;
+    if unsafe { GetNumberOfConsoleInputEvents(h, &mut count) } != 0 && count > 0 {
+        return true;
+    }
+    let mut available = 0u32;
+    if unsafe {
+        PeekNamedPipe(
+            h,
+            core::ptr::null_mut(),
+            0,
+            core::ptr::null_mut(),
+            &mut available,
+            core::ptr::null_mut(),
+        )
+    } != 0
+        && available > 0
+    {
+        return true;
     }
     unsafe { WaitForSingleObject(h, wait_ms.max(0) as u32) == 0 }
 }
@@ -618,7 +649,7 @@ fn read_key_bytes() -> Result<Key> {
         // lone ESC must not cancel the wizard before the rest arrives.
         let pending_empty = PENDING.with(|p| p.borrow().is_empty());
         if n == 1 && buf[0] == 0x1b && pending_empty {
-            if !input_ready(60) {
+            if !input_ready(250) {
                 return Ok(Key::new(KeyCode::Esc));
             }
             let more = read_stdin_raw(&mut buf[1..]).map_err(Error::from)?;
