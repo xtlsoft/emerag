@@ -240,9 +240,26 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  tui-windows:
+    runs-on: windows-latest
+    needs: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: full-windows-x86_64.exe
+          path: .
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ConPTY driver
+        run: python -m pip install pywinpty
+      - name: Test arrows and provider 11
+        run: python tests/windows_tui.py
+
   pages:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [test, full-linux, lite-linux, windows, nano, macos, rust9x]
+    needs: [test, full-linux, lite-linux, windows, nano, macos, rust9x, tui-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: read
