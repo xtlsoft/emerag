@@ -195,7 +195,18 @@ impl TermUi {
         };
         self.editor.begin(prompt)?;
         loop {
-            let key = emerag_term::read_key()?;
+            let key = match emerag_term::read_key() {
+                Ok(key) => key,
+                Err(e) if e.kind() == emerag_term::ErrorKind::EndOfInput => {
+                    return Ok(Input::Eof);
+                }
+                Err(_) => {
+                    // A broken console handle must not terminate the whole
+                    // session. Re-enter cooked mode and keep the prompt alive.
+                    drop(_guard);
+                    return self.read_cooked(prompt);
+                }
+            };
             if key.ctrl && matches!(key.code, KeyCode::Char('x')) {
                 self.editor.begin(&format!("{prompt}^X "))?;
                 let next = emerag_term::read_key()?;

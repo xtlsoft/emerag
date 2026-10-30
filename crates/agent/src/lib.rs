@@ -937,13 +937,7 @@ impl Agent {
             &[],
             4096,
             &self.cancel,
-            Some(
-                format!(
-                    "{password}
-"
-                )
-                .into_bytes(),
-            ),
+            Some(format!("{password}\n").into_bytes()),
         )?;
         if validate.code != Some(0) {
             return Err(AgentError::new(format!(
@@ -971,8 +965,7 @@ impl Agent {
     ) -> Result<String> {
         if result.code == Some(0) {
             Ok(format!(
-                "[elevated via {program}]{}{}
-{}",
+                "[elevated via {program}]{}{}\n{}",
                 if reason.is_empty() { "" } else { ": " },
                 reason,
                 result.for_model(max_output)
