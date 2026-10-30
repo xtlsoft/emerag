@@ -161,6 +161,7 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
         };
         match key.code {
             KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown if !key.ctrl => {
+                typed.clear();
                 if selected + 1 < labels.len() {
                     selected += 1;
                 }
@@ -169,18 +170,21 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
                 }
             }
             KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp if !key.ctrl => {
+                typed.clear();
                 selected = selected.saturating_sub(1);
                 if caps.ansi {
                     draw_choice(&mut out, caps, title, labels, selected, false, &mut drawn)?;
                 }
             }
             KeyCode::Home => {
+                typed.clear();
                 selected = 0;
                 if caps.ansi {
                     draw_choice(&mut out, caps, title, labels, selected, false, &mut drawn)?;
                 }
             }
             KeyCode::End => {
+                typed.clear();
                 selected = labels.len() - 1;
                 if caps.ansi {
                     draw_choice(&mut out, caps, title, labels, selected, false, &mut drawn)?;
@@ -191,9 +195,12 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
                     // Eleven providers do not fit in a single digit. Collect
                     // the number and let Enter select it, so 10 and 11 work
                     // even when arrow keys are unavailable.
+                    // A digit that cannot extend the number starts a new one,
+                    // so "3" then "5" selects 5 instead of nothing.
                     typed.push(c);
-                    if typed.len() > 2 {
-                        typed.remove(0);
+                    if !matches!(typed.parse::<usize>(), Ok(n) if n >= 1 && n <= labels.len()) {
+                        typed.clear();
+                        typed.push(c);
                     }
                     if let Ok(n) = typed.parse::<usize>() {
                         if n >= 1 && n <= labels.len() {

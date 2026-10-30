@@ -30,6 +30,8 @@ pub(crate) struct GmatchState {
     pub src: Vec<u8>,
     pub pat: Vec<u8>,
     pub pos: usize,
+    /// End of the previous match; an empty match there is skipped (Lua 5.4).
+    pub last: Option<usize>,
 }
 
 // ---- index helpers (mirroring Lua's posrelatI/getendpos) ---------------
@@ -284,6 +286,7 @@ fn str_gmatch(interp: &mut Interp, args: Vec<Value>) -> IResult<Vec<Value>> {
         src: s.into_bytes(),
         pat: p.into_bytes(),
         pos: 0,
+        last: None,
     }));
     Ok(vec![Value::Function(Rc::new(Function::gmatch(state)))])
 }
@@ -293,31 +296,34 @@ pub(crate) fn gmatch_next(
     state: &Rc<RefCell<GmatchState>>,
     _args: Vec<Value>,
 ) -> IResult<Vec<Value>> {
-    let (src, pat) = {
-        let st = state.borrow();
-        (st.src.clone(), st.pat.clone())
-    };
+    // Borrow the subject instead of cloning it per call: a gmatch over a large
+    // file would otherwise copy the whole text once for every match.
+    let mut st = state.borrow_mut();
     loop {
-        let pos = state.borrow().pos;
-        if pos > src.len() {
+        if st.pos > st.src.len() {
             return Ok(vec![Value::Nil]);
         }
-        match pattern::find(&src, &pat, pos) {
-            Ok((Some(m), steps)) => {
-                interp.charge_steps(steps)?;
-                let advance = if m.end > m.start { m.end } else { m.start + 1 };
-                state.borrow_mut().pos = advance;
-                if m.caps.is_empty() {
-                    return Ok(vec![Value::Str(slice_lossy(&src[m.start..m.end]))]);
-                }
-                return Ok(m.caps.iter().map(|c| capture_value(&src, c)).collect());
-            }
-            Ok((None, steps)) => {
-                interp.charge_steps(steps)?;
+        let (found, steps) = pattern::find(&st.src, &st.pat, st.pos).map_err(|e| interp.rt(e))?;
+        interp.charge_steps(steps)?;
+        let m = match found {
+            Some(m) => m,
+            None => {
+                st.pos = st.src.len() + 1;
                 return Ok(vec![Value::Nil]);
             }
-            Err(e) => return Err(interp.rt(e)),
+        };
+        if st.last == Some(m.end) {
+            // Empty match right where the previous one ended: step past it.
+            st.pos = m.start + 1;
+            continue;
         }
+        st.pos = m.end;
+        st.last = Some(m.end);
+        let src = &st.src;
+        if m.caps.is_empty() {
+            return Ok(vec![Value::Str(slice_lossy(&src[m.start..m.end]))]);
+        }
+        return Ok(m.caps.iter().map(|c| capture_value(src, c)).collect());
     }
 }
 

@@ -107,7 +107,20 @@ if [ "$BUILD" = "nano" ]; then
     esac
 fi
 
-FILE="emerag-$OS-$ARCH"
+if [ "$BUILD" = "lite" ] && [ "$OS" = "linux" ]; then
+    case "$ARCH" in
+        x86_64|aarch64|armv7) ;;
+        *) die "lite has no Linux build for $ARCH; use the default full build" ;;
+    esac
+fi
+
+# Release files name Apple Silicon "arm64", matching macOS's own uname.
+PLAT_ARCH="$ARCH"
+if [ "$OS" = "macos" ] && [ "$ARCH" = "aarch64" ]; then
+    PLAT_ARCH=arm64
+fi
+
+FILE="emerag-$OS-$PLAT_ARCH"
 
 case "$BUILD" in
     full) FILE="emerag-full-${FILE#emerag-}" ;;
@@ -191,10 +204,17 @@ if [ "$MODE" = "run" ]; then
     fd9_ok=0
     cand=""
 
+    # /dev/tty can exist and be readable yet fail to open when there is no
+    # controlling terminal (cron, CI, docker run without -t). Probe it.
+    tty_ok=0
+    if (: </dev/tty) 2>/dev/null; then
+        tty_ok=1
+    fi
+
     run_exec() {
         # The script is usually fed through a pipe: stdin is the script, not
         # the terminal. Reattach the interactive program to /dev/tty.
-        if [ -r /dev/tty ] && [ ! -t 0 ]; then
+        if [ "$tty_ok" = 1 ] && [ ! -t 0 ]; then
             if [ "$fd9_ok" = 1 ] && [ -e /proc/self/fd/9 ]; then
                 exec /proc/self/fd/9 "$@" </dev/tty
             fi
@@ -206,7 +226,7 @@ if [ "$MODE" = "run" ]; then
         exec "$cand" "$@"
     }
 
-    if [ "$#" -eq 0 ] && [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+    if [ "$#" -eq 0 ] && [ ! -t 0 ] && [ "$tty_ok" = 0 ]; then
         rm -f "$BIN" "$SUMS"
         trap - EXIT INT TERM
         die "no terminal available for interactive input; use -p PROMPT"

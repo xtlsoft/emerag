@@ -633,6 +633,14 @@ fn pattern_gmatch_and_gsub() {
     "#;
     assert_eq!(num(src), 2.0);
 
+    // Lua 5.4 skips an empty match where the previous match ended.
+    let src = r#"
+        local parts = {}
+        for w in string.gmatch('abc  de', '%a*') do parts[#parts + 1] = '[' .. w .. ']' end
+        return table.concat(parts)
+    "#;
+    assert_eq!(text(src), "[abc][][de]");
+
     assert_eq!(
         text("local s, n = string.gsub('hello world', 'o', '0') return s .. n"),
         "hell0 w0rld2"

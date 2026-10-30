@@ -95,15 +95,17 @@ nobody has to reverse-engineer a claim from the README.
   process is manual today.
 - TLS: no client certificates, no resumption, no TLS 1.0/1.1, no RSA key
   exchange (ECDHE only), no OCSP/CRL checking.
-- Windows 2000/XP. Rust's std requires Windows 7; a no_std port would be a
-  separate project.
+- A runtime-tested Rust build for Windows 98/2000/XP. Upstream std needs
+  Windows 7+; the rust9x builds above are CI-built only, and the C nano is the
+  supported path on those systems.
 
 ## Known deviations from the original brief
 
 - The offline release is one file, but it bundles a small llama.cpp server and
   a GGUF model rather than embedding a Rust inference engine. A 0.5B model
   would otherwise multiply the agent's 3.2 MiB RSS by 200x.
-- Windows 2000 is not reachable with the Rust standard library. The measured
-  floor is Windows 8 for the default build and Windows 7 for the legacy build.
+- Windows 2000 is not reachable with the upstream Rust standard library. The
+  floor is Windows 8 for the default build and Windows 7 for the legacy build;
+  nano (C89/VC6) and the rust9x builds cover older Windows.
 - Local models below ~0.5B parameters are included as options but tool-calling
   reliability is poor; the docs say so instead of pretending otherwise.

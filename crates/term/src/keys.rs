@@ -12,13 +12,13 @@
 //! * Alt+char (ESC prefix)
 //! * bracketed paste markers (CSI 200~ / CSI 201~)
 //!
-//! A lone ESC at the end of a read is reported as [KeyCode::Esc] immediately:
-//! the terminal layer has no portable way to wait for the follow-up byte. ESC
-//! and the Alt+char therefore need to arrive in the same read, which is what
-//! terminals normally do.
+//! [decode_keys] reports a lone ESC at the end of its input as [KeyCode::Esc].
+//! [read_key] waits briefly after a trailing ESC so a VT sequence split
+//! across reads (pipes, ConPTY, slow serial lines) is rejoined first.
 
 use core::cell::RefCell;
 use std::collections::VecDeque;
+#[cfg(not(unix))]
 use std::sync::{mpsc, Mutex, OnceLock};
 
 use crate::{Error, Result};
@@ -557,9 +557,54 @@ fn read_stdin_raw(buf: &mut [u8]) -> std::io::Result<usize> {
 
 #[cfg(not(any(unix, windows)))]
 fn read_stdin_raw(buf: &mut [u8]) -> std::io::Result<usize> {
+    use std::io::Read;
     std::io::stdin().read(buf)
 }
 
+/// Wait up to `wait_ms` for stdin to become readable.
+#[cfg(unix)]
+fn input_ready(wait_ms: i32) -> bool {
+    #[repr(C)]
+    struct PollFd {
+        fd: i32,
+        events: i16,
+        revents: i16,
+    }
+    extern "C" {
+        fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
+    }
+    let mut p = PollFd {
+        fd: 0,
+        events: 1, // POLLIN
+        revents: 0,
+    };
+    unsafe { poll(&mut p, 1, wait_ms) > 0 }
+}
+
+/// Block until at least one byte arrives; false at end of input.
+#[cfg(unix)]
+fn recv_bytes(out: &mut Vec<u8>) -> bool {
+    let mut buf = [0u8; 64];
+    match read_stdin_raw(&mut buf) {
+        Ok(n) if n > 0 => {
+            out.extend_from_slice(&buf[..n]);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Append bytes that arrive within `wait_ms`; false on timeout or EOF.
+#[cfg(unix)]
+fn recv_more(out: &mut Vec<u8>, wait_ms: u64) -> bool {
+    input_ready(wait_ms as i32) && recv_bytes(out)
+}
+
+// ConPTY exposes stdin as a pipe that cannot be polled with a timeout, so on
+// Windows (and anything else without poll) a reader thread feeds a channel
+// once the first raw key is requested. Unix polls instead and never starts
+// a thread.
+#[cfg(not(unix))]
 fn raw_receiver() -> &'static Mutex<mpsc::Receiver<u8>> {
     static RX: OnceLock<Mutex<mpsc::Receiver<u8>>> = OnceLock::new();
     RX.get_or_init(|| {
@@ -585,74 +630,34 @@ fn raw_receiver() -> &'static Mutex<mpsc::Receiver<u8>> {
     })
 }
 
-#[cfg(unix)]
-fn input_ready(wait_ms: i32) -> bool {
-    #[repr(C)]
-    struct PollFd {
-        fd: i32,
-        events: i16,
-        revents: i16,
+#[cfg(not(unix))]
+fn recv_bytes(out: &mut Vec<u8>) -> bool {
+    match raw_receiver().lock().unwrap().recv() {
+        Ok(b) => {
+            out.push(b);
+            true
+        }
+        Err(_) => false,
     }
-    extern "C" {
-        fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
-    }
-    let mut p = PollFd {
-        fd: 0,
-        events: 1, // POLLIN
-        revents: 0,
-    };
-    unsafe { poll(&mut p, 1, wait_ms) > 0 }
 }
 
-#[cfg(windows)]
-fn input_ready(wait_ms: i32) -> bool {
-    use core::ffi::c_void;
-    type Handle = *mut c_void;
-    extern "system" {
-        fn GetStdHandle(which: u32) -> Handle;
-        fn WaitForSingleObject(handle: Handle, ms: u32) -> u32;
-        fn GetNumberOfConsoleInputEvents(handle: Handle, count: *mut u32) -> i32;
-        fn PeekNamedPipe(
-            handle: Handle,
-            buffer: *mut c_void,
-            len: u32,
-            read: *mut u32,
-            available: *mut u32,
-            left: *mut u32,
-        ) -> i32;
+#[cfg(not(unix))]
+fn recv_more(out: &mut Vec<u8>, wait_ms: u64) -> bool {
+    let rx = raw_receiver().lock().unwrap();
+    match rx.recv_timeout(std::time::Duration::from_millis(wait_ms)) {
+        Ok(b) => {
+            out.push(b);
+            // Drain whatever else is already queued without waiting.
+            while out.len() < 64 {
+                match rx.try_recv() {
+                    Ok(b) => out.push(b),
+                    Err(_) => break,
+                }
+            }
+            true
+        }
+        Err(_) => false,
     }
-    let h = unsafe { GetStdHandle(0xFFFF_FFF6) };
-    if h.is_null() || h as isize == -1 {
-        return false;
-    }
-    // ConPTY can expose stdin as a pipe; a console exposes input events.
-    // Waiting alone is not reliable for both, and checking first avoids a
-    // 250 ms delay when the rest of ESC [ A is already buffered.
-    let mut count = 0u32;
-    if unsafe { GetNumberOfConsoleInputEvents(h, &mut count) } != 0 && count > 0 {
-        return true;
-    }
-    let mut available = 0u32;
-    if unsafe {
-        PeekNamedPipe(
-            h,
-            core::ptr::null_mut(),
-            0,
-            core::ptr::null_mut(),
-            &mut available,
-            core::ptr::null_mut(),
-        )
-    } != 0
-        && available > 0
-    {
-        return true;
-    }
-    unsafe { WaitForSingleObject(h, wait_ms.max(0) as u32) == 0 }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn input_ready(_wait_ms: i32) -> bool {
-    false
 }
 
 fn read_key_bytes() -> Result<Key> {
@@ -660,20 +665,17 @@ fn read_key_bytes() -> Result<Key> {
         if let Some(key) = QUEUE.with(|q| q.borrow_mut().pop_front()) {
             return Ok(key);
         }
-        let rx = raw_receiver().lock().unwrap();
-        let first = match rx.recv() {
-            Ok(b) => b,
-            Err(_) => return Err(Error::end_of_input()),
-        };
-        let mut buf = vec![first];
+        let mut buf = Vec::with_capacity(64);
+        if !recv_bytes(&mut buf) {
+            return Err(Error::end_of_input());
+        }
         // A pipe/ConPTY can return ESC alone and the rest of a VT sequence in
-        // a later read. Collect any bytes that follow promptly; a real Esc
-        // key only costs this short delay.
-        let wait_ms = if first == 0x1b { 250 } else { 2 };
+        // a later read. Whenever the batch ends in ESC, give the follow-up a
+        // moment to arrive; a real Esc key only costs this short delay.
         while buf.len() < 64 {
-            match rx.recv_timeout(std::time::Duration::from_millis(wait_ms)) {
-                Ok(b) => buf.push(b),
-                Err(_) => break,
+            let wait_ms = if buf.last() == Some(&0x1b) { 250 } else { 2 };
+            if !recv_more(&mut buf, wait_ms) {
+                break;
             }
         }
         let keys = PENDING.with(|p| {
