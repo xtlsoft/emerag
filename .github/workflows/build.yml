@@ -1,0 +1,215 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test Rust workspace
+        run: cargo test --workspace
+      - name: End-to-end mock provider tests
+        run: ./tests/e2e.sh
+      - name: Test C crypto vectors
+        run: make -C nano test_crypto
+
+  full-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, page: linux-x86_64, packages: "musl-tools" }
+          - { target: i686-unknown-linux-musl, page: linux-i686, packages: "gcc-i686-linux-gnu" }
+          - { target: aarch64-unknown-linux-musl, page: linux-aarch64, packages: "gcc-aarch64-linux-gnu" }
+          - { target: armv7-unknown-linux-musleabihf, page: linux-armv7, packages: "gcc-arm-linux-gnueabihf" }
+          - { target: riscv64gc-unknown-linux-musl, page: linux-riscv64, packages: "gcc-riscv64-linux-gnu" }
+          - { target: s390x-unknown-linux-gnu, page: linux-s390x, packages: "gcc-s390x-linux-gnu" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cross linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }}
+      - name: Build full
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Stage
+        run: |
+          mkdir -p out
+          cp "target/${{ matrix.target }}/release/emerag" "out/emerag-full-${{ matrix.page }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: full-${{ matrix.page }}
+          path: out/*
+          if-no-files-found: error
+
+  lite-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, page: linux-x86_64, packages: "musl-tools" }
+          - { target: i686-unknown-linux-musl, page: linux-i686, packages: "gcc-i686-linux-gnu" }
+          - { target: aarch64-unknown-linux-musl, page: linux-aarch64, packages: "gcc-aarch64-linux-gnu" }
+          - { target: armv7-unknown-linux-musleabihf, page: linux-armv7, packages: "gcc-arm-linux-gnueabihf" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cross linker and UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }} upx-ucl
+      - name: Build lite
+        run: cargo build --profile size --features lite --bin emerag --target ${{ matrix.target }}
+      - name: Pack and stage
+        run: |
+          mkdir -p out
+          cp "target/${{ matrix.target }}/size/emerag" "out/emerag-lite-${{ matrix.page }}"
+          upx --best --lzma "out/emerag-lite-${{ matrix.page }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lite-${{ matrix.page }}
+          path: out/*
+          if-no-files-found: error
+
+  windows:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-gnu, page: windows-x86_64.exe, tier: full, profile: release, features: "" }
+          - { target: i686-pc-windows-gnu, page: windows-x86.exe, tier: full, profile: release, features: "" }
+          - { target: x86_64-pc-windows-gnu, page: windows-x86_64.exe, tier: lite, profile: size, features: "--features lite" }
+          - { target: i686-pc-windows-gnu, page: windows-x86.exe, tier: lite, profile: size, features: "--features lite" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install MinGW and UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 upx-ucl
+      - name: Build
+        run: cargo build --profile ${{ matrix.profile }} ${{ matrix.features }} --bin emerag --target ${{ matrix.target }}
+      - name: Stage
+        run: |
+          mkdir -p out
+          cp "target/${{ matrix.target }}/${{ matrix.profile }}/emerag.exe" "out/emerag-${{ matrix.tier }}-${{ matrix.page }}"
+          if [ "${{ matrix.tier }}" = lite ]; then upx --best --lzma "out/emerag-${{ matrix.tier }}-${{ matrix.page }}"; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.tier }}-${{ matrix.page }}
+          path: out/*
+          if-no-files-found: error
+
+  nano:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { page: linux-x86_64, cc: musl-gcc, ext: "" }
+          - { page: windows-x86.exe, cc: i686-w64-mingw32-gcc, ext: ".exe" }
+          - { page: windows-x86_64.exe, cc: x86_64-w64-mingw32-gcc, ext: ".exe" }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compilers and UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools mingw-w64 upx-ucl
+      - name: Build nano
+        run: |
+          mkdir -p out
+          out="out/emerag-nano-${{ matrix.page }}"
+          case "${{ matrix.ext }}" in
+            .exe) ${{ matrix.cc }} -std=gnu89 -Os -Wall -Wextra common.c crypto.c tls.c emerag.c -o "$out" -lws2_32 -ladvapi32 ;;
+            *)    ${{ matrix.cc }} -std=gnu89 -Os -static -Wall -Wextra common.c crypto.c tls.c emerag.c -o "$out" ;;
+          esac
+          upx --best --lzma "$out"
+        working-directory: nano
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nano-${{ matrix.page }}
+          path: nano/out/*
+          if-no-files-found: error
+
+  macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15-intel, target: x86_64-apple-darwin, page: macos-x86_64, tier: full, profile: release, features: "" }
+          - { os: macos-15, target: aarch64-apple-darwin, page: macos-arm64, tier: full, profile: release, features: "" }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, page: macos-x86_64, tier: lite, profile: size, features: "--features lite" }
+          - { os: macos-15, target: aarch64-apple-darwin, page: macos-arm64, tier: lite, profile: size, features: "--features lite" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --profile ${{ matrix.profile }} ${{ matrix.features }} --bin emerag --target ${{ matrix.target }}
+      - name: Stage
+        run: |
+          mkdir -p out
+          cp "target/${{ matrix.target }}/${{ matrix.profile }}/emerag" "out/emerag-${{ matrix.tier }}-${{ matrix.page }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.tier }}-${{ matrix.page }}
+          path: out/*
+          if-no-files-found: error
+
+  pages:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [test, full-linux, lite-linux, windows, nano, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: site
+          merge-multiple: true
+      - name: Add page, installer and docs
+        run: |
+          cp www/index.html site/index.html
+          mkdir -p site/docs
+          cp docs/LEGACY.md site/docs/LEGACY.md
+          cp scripts/install.sh site/install.sh
+          chmod +x site/install.sh site/emerag-*
+          (cd site && sha256sum emerag-* install.sh > SHA256SUMS)
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

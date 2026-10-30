@@ -1,6 +1,7 @@
 # Cross-build defaults. Static link everything.
 [target.x86_64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+crt-static"]
+linker = "musl-gcc"
 
 [target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+crt-static"]
@@ -8,6 +9,7 @@ linker = "aarch64-linux-gnu-gcc"
 
 [target.i686-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+crt-static"]
+linker = "i686-linux-gnu-gcc"
 
 [target.armv7-unknown-linux-musleabihf]
 rustflags = ["-C", "target-feature=+crt-static"]

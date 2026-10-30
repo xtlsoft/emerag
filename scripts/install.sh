@@ -2,18 +2,18 @@
 # emerag one-liner installer and temporary runner.
 #
 # Install:
-#   wget -qO- http://10.20.2.226:8899/install.sh | sh
+#   wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh
 #
 # Run without installing (uses tmpfs, works on a read-only root):
-#   wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
-#   wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --doctor
+#   wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run
+#   wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --doctor
 #
 # Works with busybox sh/ash, curl, wget or busybox wget. Verified with SHA-256
 # when a checksum tool is available.
 
 set -eu
 
-BASE="${EMERAG_BASE:-http://10.20.2.226:8899}"
+BASE="${EMERAG_BASE:-https://xtlsoft.github.io/emerag}"
 MODE=install
 DIR=""
 BUILD=full
@@ -39,7 +39,7 @@ Options:
   --nano          tiny C agent, Chat Completions only, no certificate checks
   --mini          deprecated alias for --lite
   --dir DIR       install directory (default: ~/.local/bin or /usr/local/bin)
-  --base URL      download origin (default: http://10.20.2.226:8899)
+  --base URL      download origin (default: https://xtlsoft.github.io/emerag)
   -h, --help      this text
 
 Environment:
@@ -74,13 +74,19 @@ done
 
 BASE="${BASE%/}"
 
+case "$(uname -s)" in
+    Linux*) OS=linux ;;
+    Darwin*) OS=macos ;;
+    *) die "unsupported operating system: $(uname -s)" ;;
+esac
+
 case "$(uname -m)" in
-    x86_64|amd64) FILE=emerag-linux-x86_64 ;;
-    aarch64|arm64) FILE=emerag-linux-aarch64 ;;
-    armv7l|armv7*|armv8l) FILE=emerag-linux-armv7 ;;
-    i386|i486|i586|i686) FILE=emerag-linux-i686 ;;
-    riscv64) FILE=emerag-linux-riscv64 ;;
-    s390x) FILE=emerag-linux-s390x ;;
+    x86_64|amd64) ARCH=x86_64 ;;
+    aarch64|arm64) ARCH=aarch64 ;;
+    armv7l|armv7*|armv8l) ARCH=armv7 ;;
+    i386|i486|i586|i686) ARCH=i686 ;;
+    riscv64) ARCH=riscv64 ;;
+    s390x) ARCH=s390x ;;
     mips|mipsel|mips64|mips64el)
         die "MIPS is not built by this release; use a MIPS C cross-compiler for nano, or an ARM/x86 router" ;;
     armv6l)
@@ -88,9 +94,14 @@ case "$(uname -m)" in
     *) die "unsupported architecture: $(uname -m)" ;;
 esac
 
-if [ "$BUILD" = "nano" ] && [ "$FILE" != "emerag-linux-x86_64" ]; then
-    die "nano Linux builds are x86_64-only; use --lite on this architecture"
+if [ "$OS" = "macos" ] && [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ]; then
+    die "macOS is built for x86_64 and arm64 only"
 fi
+if [ "$BUILD" = "nano" ] && { [ "$OS" != "linux" ] || [ "$ARCH" != "x86_64" ]; }; then
+    die "nano is built for Linux x86_64 and Windows; use --lite on this platform"
+fi
+
+FILE="emerag-$OS-$ARCH"
 
 case "$BUILD" in
     full) FILE="emerag-full-${FILE#emerag-}" ;;

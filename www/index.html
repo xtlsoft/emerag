@@ -82,11 +82,11 @@
 </div>
 
 <div class="terminal"><span class="comment"># 58 KB C client, no installation</span>
-<span class="prompt">$</span> wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --nano
+<span class="prompt">$</span> wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --nano
 <span class="comment"># 530 KB Rust agent, no CA bundle</span>
-<span class="prompt">$</span> wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
+<span class="prompt">$</span> wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --lite
 <span class="comment"># full agent, certificates and all</span>
-<span class="prompt">$</span> wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run</div>
+<span class="prompt">$</span> wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run</div>
 
 <h2 id="tiers">Three sizes. One job.</h2>
 <div class="grid">
@@ -166,6 +166,8 @@
 <tr><td>Linux ARMv7, static musl</td><td><a href="emerag-lite-linux-armv7">emerag-lite-linux-armv7</a></td><td class="num">557 KB</td></tr>
 <tr><td>Windows x64</td><td><a href="emerag-lite-windows-x86_64.exe">emerag-lite-windows-x86_64.exe</a></td><td class="num">530 KB</td></tr>
 <tr><td>Windows x86</td><td><a href="emerag-lite-windows-x86.exe">emerag-lite-windows-x86.exe</a></td><td class="num">570 KB</td></tr>
+<tr><td>macOS Apple Silicon</td><td><a href="emerag-lite-macos-arm64">emerag-lite-macos-arm64</a></td><td class="num">~600 KB</td></tr>
+<tr><td>macOS Intel</td><td><a href="emerag-lite-macos-x86_64">emerag-lite-macos-x86_64</a></td><td class="num">~600 KB</td></tr>
 </tbody>
 </table>
 
@@ -181,21 +183,23 @@
 <tr><td>Linux s390x</td><td><a href="emerag-full-linux-s390x">emerag-full-linux-s390x</a></td><td class="num">2.0 MB</td></tr>
 <tr><td>Windows x64</td><td><a href="emerag-full-windows-x86_64.exe">emerag-full-windows-x86_64.exe</a></td><td class="num">1.7 MB</td></tr>
 <tr><td>Windows x86</td><td><a href="emerag-full-windows-x86.exe">emerag-full-windows-x86.exe</a></td><td class="num">1.6 MB</td></tr>
+<tr><td>macOS Apple Silicon</td><td><a href="emerag-full-macos-arm64">emerag-full-macos-arm64</a></td><td class="num">~1.7 MB</td></tr>
+<tr><td>macOS Intel</td><td><a href="emerag-full-macos-x86_64">emerag-full-macos-x86_64</a></td><td class="num">~1.8 MB</td></tr>
 </tbody>
 </table>
 
 <h2 id="oneliner">One line. No installation.</h2>
 <pre># 58 KB nano, from RAM
-wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --nano
+wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --nano
 
 # 530 KB lite, from RAM
-wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
+wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --lite
 
 # full agent
-wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
+wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run
 
 # install to ~/.local/bin
-wget -qO- http://10.20.2.226:8899/install.sh | sh</pre>
+wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh</pre>
 <p>The installer uses <code>curl</code>, <code>wget</code> or busybox <code>wget</code>, verifies SHA-256, and falls back from a noexec <code>TMPDIR</code> to <code>/dev/shm</code>. Nano Linux is x86_64-only; Windows binaries are direct downloads.</p>
 
 <h2>Platforms</h2>
@@ -206,6 +210,7 @@ wget -qO- http://10.20.2.226:8899/install.sh | sh</pre>
 <tr><td>Minimal OpenWrt / musl routers</td><td>Lite / Full</td><td>static ARM/x86, no libc package</td></tr>
 <tr><td>Windows 8+</td><td>All</td><td>nano is tiny; lite/full have all tools</td></tr>
 <tr><td>Termux / Android</td><td>Lite / Full</td><td>ARM64, DNS fallback, loopback OAuth</td></tr>
+<tr><td>macOS 11+</td><td>Lite / Full</td><td>Apple Silicon and Intel builds</td></tr>
 <tr><td>Rescue USB / old 32-bit PC</td><td>Full / Lite</td><td>static Linux x86</td></tr>
 <tr><td>Windows 98/2000 Lite or Full</td><td>Rust9x build</td><td>optional third-party toolchain; see docs/LEGACY.md</td></tr>
 </tbody>

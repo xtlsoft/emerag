@@ -95,16 +95,16 @@ clipboard. If DNS is broken it offers to pin an IP address.
 ### Install or run without installing
 
     # install (curl, wget or busybox wget)
-    wget -qO- http://10.20.2.226:8899/install.sh | sh
+    wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh
 
     # temporary run; uses tmpfs/RAM and works with a read-only root
-    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
+    wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run
 
     # 58 KB C client, no certificates
-    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --nano
+    wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --nano
 
     # 530-630 KB Rust agent, no CA bundle
-    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
+    wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --lite
 
 The installer tries curl, wget and busybox wget, verifies SHA-256 when a
 checksum tool exists, and falls back from a noexec TMPDIR to /dev/shm.
@@ -140,7 +140,8 @@ Not implemented yet (tracked in [docs/STATUS.md](docs/STATUS.md)):
 - MCP *server* mode (client mode works),
 - session resume (--transcript writes, resume is manual),
 - Windows 7 legacy build (script provided, not verified in this environment),
-- macOS artifacts built here (CI builds them on macOS),
+- macOS artifacts built in this WSL environment (GitHub Actions builds both),
+
 - musl s390x and a loongarch64 build (no upstream std / no linker here).
 
 ## Interfaces for hard-to-input situations

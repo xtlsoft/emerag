@@ -21,10 +21,10 @@ Check it runs:
 
 If you have network but no patience:
 
-    wget -qO- http://10.20.2.226:8899/install.sh | sh
-    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run
-    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --lite
-    wget -qO- http://10.20.2.226:8899/install.sh | sh -s -- --run --nano
+    wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh
+    wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run
+    wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --lite
+    wget -qO- https://xtlsoft.github.io/emerag/install.sh | sh -s -- --run --nano
 
 --run uses a writable tmpfs and leaves the root filesystem alone. If no
 curl/wget exists, busybox wget is used. --lite has no CA bundle and does not
