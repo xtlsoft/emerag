@@ -1,5 +1,7 @@
 # emerag
 
+[![build](https://github.com/xtlsoft/emerag/actions/workflows/build.yml/badge.svg)](https://github.com/xtlsoft/emerag/actions/workflows/build.yml)
+
 **A tiny, statically linked coding agent for emergencies.**
 
 When a machine is broken, freshly installed, air-gapped, or running on a CPU

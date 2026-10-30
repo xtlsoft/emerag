@@ -110,6 +110,22 @@ rather than assumed.
 Building on Linux requires an SDK (osxcross). The code itself is portable; the
 CI matrix builds macOS on macOS runners.
 
+## GitHub Actions
+
+`.github/workflows/build.yml` runs on every push to `main`, every pull
+request, and manually. It builds:
+
+- full: Linux x86_64/i686/aarch64/armv7/riscv64/s390x, Windows x86/x64,
+  macOS Intel/Apple Silicon;
+- lite: Linux x86_64/i686/aarch64/armv7, Windows x86/x64, macOS Intel/Apple
+  Silicon;
+- nano: Linux x86_64 musl, Windows x86/x64.
+
+The same workflow assembles the landing page and publishes it to
+<https://xtlsoft.github.io/emerag/> with SHA-256 sums. Binary artifacts are
+also attached to the workflow run. Pull requests run the same builds and tests
+but do not deploy Pages.
+
 ## Compatibility reports
 
     ./scripts/compat-report.sh dist/*
