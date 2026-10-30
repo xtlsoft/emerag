@@ -109,7 +109,7 @@ fi
 
 if [ "$BUILD" = "lite" ] && [ "$OS" = "linux" ]; then
     case "$ARCH" in
-        x86_64|aarch64|armv7) ;;
+        x86_64|aarch64|armv7|i686) ;;
         *) die "lite has no Linux build for $ARCH; use the default full build" ;;
     esac
 fi
