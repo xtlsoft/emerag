@@ -56,11 +56,11 @@ def main():
     proc = PtyProcess.spawn([exe, "--wizard", "--no-write"], dimensions=(40, 120))
     time.sleep(2)
     initial = drain(proc)
-    proc.write("\x1b[B")
+    proc.write("\x1b[A")
     time.sleep(0.5)
     after = drain(proc)
-    if "> 2." not in (initial + after):
-        print("FAIL: Down arrow did not move the provider selection")
+    if "> 10." not in (initial + after):
+        print("FAIL: Up arrow did not move the provider selection")
         print((initial + after)[-1000:])
         proc.terminate(force=True)
         return 1

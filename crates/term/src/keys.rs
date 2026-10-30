@@ -505,6 +505,66 @@ pub fn read_key() -> Result<Key> {
 }
 
 #[cfg(unix)]
+fn read_stdin_raw(buf: &mut [u8]) -> std::io::Result<usize> {
+    use core::ffi::c_void;
+    extern "C" {
+        fn read(fd: i32, buf: *mut c_void, count: usize) -> isize;
+    }
+    loop {
+        let n = unsafe { read(0, buf.as_mut_ptr() as *mut c_void, buf.len()) };
+        if n >= 0 {
+            return Ok(n as usize);
+        }
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn read_stdin_raw(buf: &mut [u8]) -> std::io::Result<usize> {
+    use core::ffi::c_void;
+    type Handle = *mut c_void;
+    extern "system" {
+        fn GetStdHandle(which: u32) -> Handle;
+        fn ReadFile(
+            handle: Handle,
+            buf: *mut c_void,
+            len: u32,
+            read: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+    }
+    let h = unsafe { GetStdHandle(0xFFFF_FFF6) };
+    if h.is_null() || h as isize == -1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotConnected,
+            "no stdin handle",
+        ));
+    }
+    let mut got = 0u32;
+    let ok = unsafe {
+        ReadFile(
+            h,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as u32,
+            &mut got,
+            core::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(got as usize)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn read_stdin_raw(buf: &mut [u8]) -> std::io::Result<usize> {
+    std::io::stdin().read(buf)
+}
+
+#[cfg(unix)]
 fn input_ready(wait_ms: i32) -> bool {
     #[repr(C)]
     struct PollFd {
@@ -549,7 +609,7 @@ fn read_key_bytes() -> Result<Key> {
             return Ok(key);
         }
         let mut buf = [0u8; 64];
-        let mut n = std::io::stdin().read(&mut buf).map_err(Error::from)?;
+        let mut n = read_stdin_raw(&mut buf).map_err(Error::from)?;
         if n == 0 {
             return Err(Error::end_of_input());
         }
@@ -561,7 +621,7 @@ fn read_key_bytes() -> Result<Key> {
             if !input_ready(60) {
                 return Ok(Key::new(KeyCode::Esc));
             }
-            let more = std::io::stdin().read(&mut buf[1..]).map_err(Error::from)?;
+            let more = read_stdin_raw(&mut buf[1..]).map_err(Error::from)?;
             if more == 0 {
                 return Ok(Key::new(KeyCode::Esc));
             }
