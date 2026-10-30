@@ -91,7 +91,7 @@ paths. It has not been executed on a real Windows installation.
 | --- | --- | --- | --- |
 | nano | C89 | 58-82 KB | none, verification disabled |
 | lite | Rust | 530-630 KB | none, verification disabled |
-| full | Rust | 1.6-2.0 MB | 118-CA bundle, verification on |
+| full | Rust | 1.3-2.0 MB | 118-CA bundle, verification on |
 
 Nano has its own Windows 98/2000/XP path (VC6/WinSock 2). Lite and full can
 target rust9x for legacy Windows; see [LEGACY.md](LEGACY.md).

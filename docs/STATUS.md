@@ -39,7 +39,7 @@ nobody has to reverse-engineer a claim from the README.
   provider..."; wizard selections are remembered.
 - **Distribution**: POSIX/busybox installer with SHA-256 verification and
   tmpfs/noexec fallbacks; three tiers: nano C (58-82 KB), lite Rust
-  (530-630 KB, no CA bundle), full Rust (1.6-2.0 MB, 118-CA bundle).
+  (530-630 KB, no CA bundle), full Rust (1.3-2.0 MB, 118-CA bundle).
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
 - **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,
