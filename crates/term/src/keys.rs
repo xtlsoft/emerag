@@ -488,21 +488,6 @@ thread_local! {
 /// proper arrow/function keys even without VT input support. On every other
 /// platform (and for redirected stdin) it reads bytes and runs [decode_keys].
 pub fn read_key() -> Result<Key> {
-    #[cfg(windows)]
-    {
-        // If VT input mode was accepted, use the byte decoder: ConPTY and
-        // Windows Terminal deliver arrows as ESC [ A, and key records can be
-        // ambiguous there. Only legacy consoles without VT input need
-        // ReadConsoleInputW.
-        if !crate::raw::vt_input() {
-            match win::read_key() {
-                Ok(key) => return Ok(key),
-                Err(_) => {
-                    // Fall through to the byte decoder.
-                }
-            }
-        }
-    }
     read_key_bytes()
 }
 
@@ -699,6 +684,7 @@ fn read_key_bytes() -> Result<Key> {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 mod win {
     use super::*;
     use core::cell::Cell;

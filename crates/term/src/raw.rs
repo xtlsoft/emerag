@@ -9,14 +9,6 @@
 use crate::{Error, Result};
 use emerag_util::sys;
 
-#[cfg(windows)]
-static VT_INPUT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-#[cfg(windows)]
-pub(crate) fn vt_input() -> bool {
-    VT_INPUT.load(core::sync::atomic::Ordering::Relaxed)
-}
-
 #[cfg(all(
     unix,
     any(
@@ -218,11 +210,9 @@ mod platform {
                 | ENABLE_QUICK_EDIT_MODE);
         new_input |= ENABLE_EXTENDED_FLAGS;
         new_input |= ENABLE_VIRTUAL_TERMINAL_INPUT;
-        let mut vt_input = true;
         if unsafe { SetConsoleMode(input, new_input) } == 0 {
-            // Legacy consoles reject VT input. ReadConsoleInputW still works
-            // there; on ConPTY the VT byte stream is the fallback.
-            vt_input = false;
+            // Legacy consoles reject VT input. Keep line/echo off; the byte
+            // reader still gets whatever the console produces.
             let fallback = new_input & !ENABLE_VIRTUAL_TERMINAL_INPUT;
             if unsafe { SetConsoleMode(input, fallback) } == 0 {
                 return Err(Error::new(format!(
@@ -231,7 +221,6 @@ mod platform {
                 )));
             }
         }
-        VT_INPUT.store(vt_input, core::sync::atomic::Ordering::Relaxed);
 
         // Best effort: make ANSI output work on Windows 10+ consoles. If the
         // console rejects it we simply keep the old mode; Screen still has a
