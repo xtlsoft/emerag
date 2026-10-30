@@ -269,6 +269,9 @@ fn draw_choice<W: Write>(
         let line = format!("{marker}{}. {}", i + 1, label);
         lines.push(fit(caps, &line, width));
     }
+    if labels.len() > 9 {
+        lines.push(fit(caps, "  type the number and press Enter", width));
+    }
     if !first && caps.ansi && *drawn > 0 {
         write!(out, "\x1b[{}A", *drawn).map_err(Error::from)?;
     }
