@@ -230,10 +230,10 @@ jobs:
             cargo +rust9x build --profile "$profile" $features --bin emerag --target "$target"
             cp "target/$target/$profile/emerag.exe" "out/emerag-$tier-$page"
           }
-          build i586-rust9x-windows-msvc full legacy-windows-pentium release ""
-          build i586-rust9x-windows-msvc lite legacy-windows-pentium size "--features lite"
-          build i686-rust9x-windows-msvc full legacy-windows-x86 release ""
-          build i686-rust9x-windows-msvc lite legacy-windows-x86 size "--features lite"
+          build i586-rust9x-windows-msvc full legacy-windows-pentium.exe release ""
+          build i586-rust9x-windows-msvc lite legacy-windows-pentium.exe size "--features lite"
+          build i686-rust9x-windows-msvc full legacy-windows-x86.exe release ""
+          build i686-rust9x-windows-msvc lite legacy-windows-x86.exe size "--features lite"
       - uses: actions/upload-artifact@v4
         with:
           name: rust9x
