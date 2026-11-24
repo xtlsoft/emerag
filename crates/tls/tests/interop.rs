@@ -339,6 +339,48 @@ fn local_cfg(ca_pem: Vec<u8>) -> TlsConfig {
     cfg
 }
 
+// ------------------------------------------------------- read timeouts
+
+#[test]
+fn read_timeout_fires_and_stream_stays_usable() {
+    if !have_openssl() {
+        eprintln!("skipping read timeout test: openssl not found");
+        return;
+    }
+    let certs = make_certs("read-timeout", "rsa");
+    let ca = certs.ca_pem.clone();
+    let server = spawn_server(certs, &["-tls1_3"]);
+    let mut stream = connect_ok(server.port, &local_cfg(ca));
+    // s_server -www says nothing until it gets a request, so this read must
+    // give up after the short timeout instead of blocking.
+    stream
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set timeout");
+    let started = std::time::Instant::now();
+    let mut buf = [0u8; 64];
+    let err = stream.read(&mut buf).expect_err("read should time out");
+    assert!(
+        matches!(
+            err.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ),
+        "unexpected error kind: {err:?}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+    // The timeout must not poison the stream.
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("reset timeout");
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .expect("write request");
+    let body = read_response(&mut stream);
+    assert!(
+        body.starts_with("HTTP/1.0 200") || body.starts_with("HTTP/1.1 200"),
+        "{body:?}"
+    );
+}
+
 // ------------------------------------------------------- TLS 1.3 interop
 
 #[test]

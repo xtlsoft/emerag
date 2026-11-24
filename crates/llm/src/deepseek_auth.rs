@@ -44,14 +44,46 @@ pub struct AccountGrant {
     pub user: Value,
 }
 
+/// Network settings for sign-in requests: the same --resolve, --dns, proxy
+/// and TLS options inference uses, so sign-in works on the broken networks
+/// those options exist for.
+#[derive(Clone, Default)]
+pub struct AuthNetwork {
+    pub resolve: emerag_http::ResolveTable,
+    pub tls: Option<TlsOptions>,
+    pub proxy: Option<emerag_http::ProxyConfig>,
+    /// Nameservers to use; empty means discover them.
+    pub dns_servers: Vec<IpAddr>,
+    /// Ask dns_servers before the system resolver (--dns given).
+    pub dns_first: bool,
+}
+
+static NETWORK: std::sync::Mutex<Option<AuthNetwork>> = std::sync::Mutex::new(None);
+
+/// Install the network settings used by every later sign-in call.
+pub fn set_network(net: AuthNetwork) {
+    *emerag_util::sync::lock(&NETWORK) = Some(net);
+}
+
 fn client() -> Client {
-    let discovered = emerag_http::dns::discover();
+    let net = emerag_util::sync::lock(&NETWORK)
+        .clone()
+        .unwrap_or_default();
+    let dns_servers = if net.dns_servers.is_empty() {
+        emerag_http::dns::discover().servers
+    } else {
+        net.dns_servers.clone()
+    };
     Client {
-        resolve: emerag_http::ResolveTable::new(),
-        tls: TlsOptions::new(),
-        // Honour HTTPS_PROXY/NO_PROXY like inference does, so sign-in works
-        // behind the same corporate proxy.
-        proxy: Some(emerag_http::ProxyConfig::from_env()),
+        resolve: net.resolve.clone(),
+        tls: net.tls.clone().unwrap_or_else(TlsOptions::new),
+        // Without explicit settings, honour HTTPS_PROXY/NO_PROXY like
+        // inference does, so sign-in works behind the same proxy.
+        proxy: Some(
+            net.proxy
+                .clone()
+                .unwrap_or_else(emerag_http::ProxyConfig::from_env),
+        ),
         connect_timeout: Duration::from_secs(15),
         read_timeout: Duration::from_secs(30),
         max_redirects: 2,
@@ -59,8 +91,8 @@ fn client() -> Client {
         verbose: false,
         cancel: emerag_util::sync::CancelToken::new(),
         no_dns: false,
-        dns_servers: discovered.servers,
-        dns_first: false,
+        dns_servers,
+        dns_first: net.dns_first,
     }
 }
 
@@ -330,6 +362,29 @@ fn _unused(_: &Map) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sign_in_uses_installed_network_settings() {
+        let mut resolve = emerag_http::ResolveTable::new();
+        resolve
+            .parse_entry("platform.deepseek.com:443:192.0.2.7")
+            .unwrap();
+        set_network(AuthNetwork {
+            resolve,
+            tls: None,
+            proxy: None,
+            dns_servers: vec!["192.0.2.53".parse().unwrap()],
+            dns_first: true,
+        });
+        let c = client();
+        assert_eq!(
+            c.resolve.lookup("platform.deepseek.com", 443),
+            Some("192.0.2.7".parse().unwrap())
+        );
+        assert!(c.dns_first);
+        assert_eq!(c.dns_servers, vec!["192.0.2.53".parse::<IpAddr>().unwrap()]);
+        set_network(AuthNetwork::default());
+    }
 
     #[test]
     fn ipv6_loopback_platform_is_allowed() {

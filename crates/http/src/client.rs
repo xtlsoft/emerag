@@ -278,9 +278,13 @@ impl Client {
             )));
         }
         if self.dns_first && !self.dns_servers.is_empty() {
-            if let Ok(ips) =
-                crate::dns::resolve(host, port, &self.dns_servers, Duration::from_secs(4))
-            {
+            if let Ok(ips) = crate::dns::resolve_cancellable(
+                host,
+                port,
+                &self.dns_servers,
+                Duration::from_secs(4),
+                Some(&self.cancel),
+            ) {
                 if !ips.is_empty() {
                     return Ok(ips);
                 }
@@ -303,7 +307,13 @@ impl Client {
             Err(e) => last_error = Some(format!("system resolver: {e}")),
         }
         if !self.dns_servers.is_empty() {
-            match crate::dns::resolve(host, port, &self.dns_servers, Duration::from_secs(4)) {
+            match crate::dns::resolve_cancellable(
+                host,
+                port,
+                &self.dns_servers,
+                Duration::from_secs(4),
+                Some(&self.cancel),
+            ) {
                 Ok(ips) if !ips.is_empty() => return Ok(ips),
                 Ok(_) => {
                     last_error = Some(format!(

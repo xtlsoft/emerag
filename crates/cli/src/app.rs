@@ -19,6 +19,9 @@ pub struct App {
     pub background: Vec<crate::sessions::BgHandle>,
     next_bg: usize,
     session_persist: bool,
+    /// Ids deleted here since the last save, removed from the shared file
+    /// even if another process still lists them.
+    deleted_sessions: Vec<String>,
 }
 
 impl App {
@@ -61,6 +64,7 @@ impl App {
             background: Vec::new(),
             next_bg: 1,
             session_persist,
+            deleted_sessions: Vec::new(),
         }
     }
 
@@ -82,8 +86,9 @@ impl App {
         }
         if let Err(e) = crate::sessions::save(
             &self.cfg.sessions_file(),
-            &self.sessions,
+            &mut self.sessions,
             self.active_session,
+            &mut self.deleted_sessions,
         ) {
             self.session_persist = false;
             eprintln!(
@@ -372,7 +377,8 @@ impl App {
             }
         }
 
-        self.sessions.remove(idx);
+        let removed = self.sessions.remove(idx);
+        self.deleted_sessions.push(removed.id);
         if self.sessions.is_empty() {
             let model = self.cfg.model.clone();
             self.sessions.push(crate::sessions::ChatSession::new(

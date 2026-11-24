@@ -83,6 +83,17 @@ fn write_atomic_impl(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
         _ => path,
     };
     let existing = std::fs::metadata(path).ok().filter(|m| m.is_file());
+    #[cfg(unix)]
+    if let Some(meta) = &existing {
+        use std::os::unix::fs::MetadataExt;
+        if meta.nlink() > 1 {
+            // Renaming a new file into place would detach this name from the
+            // other hard links, which would keep the old contents. Rewrite
+            // the shared inode in place instead: not atomic, but every link
+            // sees the new contents, and mode and owner are untouched.
+            return write_in_place(path, bytes);
+        }
+    }
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let parent = if parent.as_os_str().is_empty() {
         Path::new(".")
@@ -145,6 +156,20 @@ fn write_atomic_impl(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
             })
         }
     }
+}
+
+/// Truncate and rewrite an existing file through its own inode.
+#[cfg(unix)]
+fn write_in_place(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| crate::err!("cannot open {}: {e}", path.display()))?;
+    f.write_all(bytes)
+        .map_err(|e| crate::err!("cannot write {}: {e}", path.display()))?;
+    f.sync_data().ok();
+    Ok(())
 }
 
 pub fn write_text_atomic(path: &Path, text: &str) -> Result<()> {
@@ -300,5 +325,19 @@ mod tests {
     fn binary_detection() {
         assert!(looks_binary(b"abc\0def"));
         assert!(!looks_binary(b"plain text"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rewrite_keeps_hard_links() {
+        let dir = std::env::temp_dir().join(format!("emerag-hl-{}", crate::rand::id(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.txt");
+        let b = dir.join("b.txt");
+        std::fs::write(&a, "old").unwrap();
+        std::fs::hard_link(&a, &b).unwrap();
+        write_text_atomic(&a, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "new");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
