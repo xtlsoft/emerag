@@ -20,6 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - name: Test Rust workspace
         run: cargo test --workspace -- --test-threads=1
       - name: Build the debug binary used by e2e
@@ -28,6 +30,10 @@ jobs:
         run: ./tests/e2e.sh
       - name: Test C crypto vectors
         run: make -C nano test_crypto
+      - name: Clippy (deny-level lints only)
+        run: cargo clippy --workspace --all-targets
+      - name: Formatting
+        run: cargo fmt --all --check
 
   # The unit and integration tests on the other two host families. Raw-mode,
   # console, process-tree and path code differ per OS and used to be checked
@@ -73,7 +79,9 @@ jobs:
           runner_var="CARGO_TARGET_$(printf '%s' "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')_RUNNER"
           export "$runner_var=${{ matrix.qemu }}"
           if [ -n "${{ matrix.prefix }}" ]; then export QEMU_LD_PREFIX="${{ matrix.prefix }}"; fi
-          cargo test --workspace --target ${{ matrix.target }} -- --test-threads=1
+          # Doctests are left to the host jobs: rustdoc links them without
+          # the target's crt-static flags, which fails on musl cross targets.
+          cargo test --workspace --target ${{ matrix.target }} --lib --bins --tests -- --test-threads=1
 
   # Targets without a release artifact still have to compile: BSD and
   # illumos raw mode and winsize, Android, ppc64le termios, LoongArch, and
