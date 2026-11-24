@@ -199,14 +199,73 @@ fn setup_console_encoding() {
     }
 }
 
+/// Windows: switch the console to VT output processing and report whether
+/// it accepted. Windows 10+ consoles do; Windows 7/8 and legacy-mode consoles
+/// refuse, and must then get plain text no matter what the environment
+/// claims. None on other platforms, or when stdout is not a console.
+fn probe_console_vt() -> Option<bool> {
+    #[cfg(windows)]
+    {
+        use core::ffi::c_void;
+        extern "system" {
+            fn GetStdHandle(which: u32) -> *mut c_void;
+            fn GetConsoleMode(handle: *mut c_void, mode: *mut u32) -> i32;
+            fn SetConsoleMode(handle: *mut c_void, mode: u32) -> i32;
+        }
+        const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5;
+        const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
+        unsafe {
+            let h = GetStdHandle(STD_OUTPUT_HANDLE);
+            if h.is_null() || h as isize == -1 {
+                return None;
+            }
+            let mut mode = 0u32;
+            if GetConsoleMode(h, &mut mode) == 0 {
+                return None;
+            }
+            if mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0 {
+                return Some(true);
+            }
+            Some(SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0)
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 /// Detect the current terminal. Never panics and never fails: an unknown
 /// terminal becomes an 80x24 plain-text terminal.
+///
+/// Overrides for terminals that misreport themselves:
+/// EMERAG_PLAIN=1 forces plain ASCII output with no escape sequences, and
+/// EMERAG_COOKED=1 forces line-buffered input (no raw mode).
 pub fn detect() -> Capabilities {
     setup_console_encoding();
     let size = sys::term_size();
     let tty_in = sys::is_tty(0);
     let tty_out = sys::is_tty(1);
-    detect_from(|name| std::env::var(name).ok(), tty_in, tty_out, size)
+    let vt = probe_console_vt();
+    detect_with(|name| std::env::var(name).ok(), tty_in, tty_out, size, vt)
+}
+
+/// TERM values that are not ANSI/VT100 compatible, even though they are not
+/// "dumb": printing CSI sequences to them produces garbage.
+const NON_ANSI_TERMS: &[&str] = &[
+    "dumb", "unknown", "vt52", "emacs", "network", "9term", "glasstty", "tty33", "tty43", "lpr",
+    "printer",
+];
+
+fn env_flag(value: Option<String>) -> bool {
+    matches!(
+        value
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
 }
 
 /// Testable capability detection.
@@ -215,6 +274,21 @@ pub fn detect() -> Capabilities {
 /// size comes from [emerag_util::sys::term_size]. The function is pure with
 /// respect to its arguments, which is why it is public.
 pub fn detect_from<F>(env: F, tty_in: bool, tty_out: bool, size: Option<(u16, u16)>) -> Capabilities
+where
+    F: Fn(&str) -> Option<String>,
+{
+    detect_with(env, tty_in, tty_out, size, None)
+}
+
+/// [detect_from] plus the result of the Windows console VT probe
+/// (Some(true) accepted, Some(false) refused, None not applicable).
+pub fn detect_with<F>(
+    env: F,
+    tty_in: bool,
+    tty_out: bool,
+    size: Option<(u16, u16)>,
+    console_vt: Option<bool>,
+) -> Capabilities
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -227,14 +301,25 @@ where
     }
     // A terminal we can read keys from and draw on is interactive. If either
     // side is redirected we prefer the line-oriented fallback.
-    let tty = tty_in && tty_out;
+    let real_tty = tty_in && tty_out;
+    let mut tty = real_tty;
 
     // Empty environment variables are treated as unset, matching util::env_var.
     let get = |name: &str| env(name).filter(|value| !value.is_empty());
 
     let term = get("TERM").unwrap_or_default();
     let term_l = term.trim().to_ascii_lowercase();
-    let term_ok = !term_l.is_empty() && term_l != "dumb";
+    let term_ok = !term_l.is_empty() && !NON_ANSI_TERMS.contains(&term_l.as_str());
+
+    // Emacs M-x shell (comint) and similar front ends edit the line
+    // themselves and do not understand raw-mode redraws: read whole lines.
+    if term_l == "dumb" && get("INSIDE_EMACS").is_some() {
+        tty = false;
+    }
+    if env_flag(get("EMERAG_COOKED")) {
+        tty = false;
+    }
+    let plain = env_flag(get("EMERAG_PLAIN"));
 
     // Environment markers for terminals that do not set TERM (notably the
     // Windows console / Windows Terminal).
@@ -246,8 +331,12 @@ where
         || get("TERM_PROGRAM").is_some()
         || get("COLORTERM").is_some();
 
-    let windows_vt = cfg!(windows) && tty && ansi_env;
-    let ansi = (term_ok || windows_vt) && (tty || ansi_env);
+    let ansi = match console_vt {
+        // A Windows console: trust the probe, not the environment. ANSICON
+        // hooks the console API, so it works even where the probe fails.
+        Some(vt) => vt || get("ANSICON").is_some(),
+        None => term_ok && (real_tty || ansi_env),
+    } && !plain;
 
     let no_color = env("NO_COLOR").is_some();
     let colorterm = get("COLORTERM").unwrap_or_default().to_ascii_lowercase();
@@ -262,7 +351,7 @@ where
         || term_l.contains("konsole")
         || term_l == "linux";
     let color =
-        ansi && !no_color && (!colorterm.is_empty() || term_color || (cfg!(windows) && tty));
+        ansi && !no_color && (!colorterm.is_empty() || term_color || console_vt == Some(true));
 
     // Locale precedence follows POSIX: LC_ALL, then LC_CTYPE, then LANG.
     let locale = get("LC_ALL")
@@ -271,7 +360,18 @@ where
         .unwrap_or_default()
         .to_ascii_lowercase();
     let locale_utf8 = locale.contains("utf-8") || locale.contains("utf8");
-    let unicode = locale_utf8 || (cfg!(windows) && tty);
+    // The Linux and BSD text consoles run UTF-8 but their fonts lack most
+    // symbols the UI uses (check marks, record dots), which render as
+    // diamonds. Windows consoles before VT support (7/8) use raster fonts
+    // without them as well.
+    let console_font = matches!(term_l.as_str(), "linux" | "cons25" | "vt100" | "vt220")
+        || term_l.starts_with("vt1")
+        || term_l.starts_with("vt2");
+    let unicode = !plain
+        && match console_vt {
+            Some(vt) => vt,
+            None => locale_utf8 && !console_font,
+        };
 
     Capabilities {
         width,
@@ -370,6 +470,71 @@ mod tests {
             None,
         );
         assert!(caps.unicode);
+    }
+
+    #[test]
+    fn non_ansi_terms_are_plain() {
+        for term in ["vt52", "unknown", "emacs", "network"] {
+            let env = move |name: &str| (name == "TERM").then(|| term.to_string());
+            let caps = detect_from(env, true, true, None);
+            assert!(!caps.ansi, "{term} must not get escape sequences");
+        }
+    }
+
+    #[test]
+    fn emacs_shell_and_overrides_use_cooked_plain_mode() {
+        let caps = detect_from(
+            env_of(&[("TERM", "dumb"), ("INSIDE_EMACS", "29.1,comint")]),
+            true,
+            true,
+            None,
+        );
+        assert!(!caps.tty);
+        let caps = detect_from(
+            env_of(&[("TERM", "xterm"), ("EMERAG_COOKED", "1")]),
+            true,
+            true,
+            None,
+        );
+        assert!(!caps.tty && caps.ansi);
+        let caps = detect_from(
+            env_of(&[
+                ("TERM", "xterm"),
+                ("LANG", "C.UTF-8"),
+                ("EMERAG_PLAIN", "yes"),
+            ]),
+            true,
+            true,
+            None,
+        );
+        assert!(caps.tty && !caps.ansi && !caps.color && !caps.unicode);
+    }
+
+    #[test]
+    fn windows_console_trusts_the_vt_probe() {
+        // Windows 7 console with a stray TERM_PROGRAM: no escapes, no Unicode.
+        let caps = detect_with(
+            env_of(&[("TERM_PROGRAM", "vscode")]),
+            true,
+            true,
+            None,
+            Some(false),
+        );
+        assert!(!caps.ansi && !caps.color && !caps.unicode);
+        // Windows 10 conhost without any marker variable: VT works.
+        let caps = detect_with(env_of(&[]), true, true, None, Some(true));
+        assert!(caps.ansi && caps.color && caps.unicode);
+    }
+
+    #[test]
+    fn linux_console_gets_ascii_glyphs() {
+        let caps = detect_from(
+            env_of(&[("TERM", "linux"), ("LANG", "en_US.UTF-8")]),
+            true,
+            true,
+            None,
+        );
+        assert!(caps.ansi && caps.color && !caps.unicode);
     }
 
     #[test]

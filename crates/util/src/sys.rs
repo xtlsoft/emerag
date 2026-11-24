@@ -111,7 +111,16 @@ pub fn term_size() -> Option<(u16, u16)> {
             ))
         ))]
         const TIOCGWINSZ: core::ffi::c_ulong = 0x5413;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(any(target_os = "solaris", target_os = "illumos"))]
+        const TIOCGWINSZ: core::ffi::c_ulong = 0x5468;
+        #[cfg(target_os = "android")]
+        const TIOCGWINSZ: core::ffi::c_ulong = 0x5413;
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "solaris",
+            target_os = "illumos"
+        )))]
         const TIOCGWINSZ: core::ffi::c_ulong = 0x40087468;
 
         for fd in [1, 0, 2] {
