@@ -249,7 +249,17 @@ is broken.
 - No Unicode? `--ascii` and the glyph table switches to ASCII.
 - Serial console? Keep the default (no alternate screen); output is appended,
   never repainted.
-- Arrow keys missing? History is optional; type commands.
+- Arrow keys missing? History is optional; type commands. Menus accept the
+  number of an entry; on a terminal without cursor movement the current
+  choice is echoed below the menu as you press j/k or the arrows.
+- Garbage escape sequences? `EMERAG_PLAIN=1` forces plain ASCII output with no
+  escape sequences, whatever TERM says.
+- Keys misbehave or the line redraws badly (Emacs shell buffers, web
+  consoles, odd serial setups)? `EMERAG_COOKED=1` reads whole lines without
+  raw mode. Emacs `M-x shell` (TERM=dumb with INSIDE_EMACS) gets this
+  automatically.
+- Closed stdin is never an answer: at EOF an approval or yes/no question is
+  answered "no", not with its default.
 
 ## Windows
 

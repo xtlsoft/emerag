@@ -42,6 +42,12 @@ nobody has to reverse-engineer a claim from the README.
   (530-630 KB, no CA bundle), full Rust (1.3-2.0 MB, 118-CA bundle).
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
+- **CI coverage**: tests run natively on Linux, macOS and Windows and under
+  qemu-user on aarch64, armv7, i686, riscv64 and big-endian s390x; release
+  binaries are smoke-run; FreeBSD, NetBSD, illumos, Android, ppc64le,
+  loongarch64 and Windows on ARM are compile-checked; Rust 1.74 (MSRV) and
+  1.77.2 (Windows 7) are compile-checked. Raw mode covers Linux (all arches),
+  macOS, the BSDs and illumos.
 - **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,
   local up/status/stop/models, packaging script.
 
