@@ -219,7 +219,7 @@ pub fn save(path: &Path, sessions: &[ChatSession], active: usize) -> Result<(), 
     if let Some(parent) = path.parent() {
         emerag_util::fsutil::ensure_dir(parent).map_err(|e| e.to_string())?;
     }
-    emerag_util::fsutil::write_text_atomic(path, &text).map_err(|e| e.to_string())?;
+    emerag_util::fsutil::write_text_private_atomic(path, &text).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -228,9 +228,42 @@ pub fn save(path: &Path, sessions: &[ChatSession], active: usize) -> Result<(), 
     Ok(())
 }
 
+/// Move an unreadable state file aside so the next save cannot destroy it.
+/// Returns where it went.
+pub fn quarantine(path: &Path) -> Option<std::path::PathBuf> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut name = path.file_name()?.to_os_string();
+    name.push(format!(".corrupt-{ts}"));
+    let dest = path.with_file_name(name);
+    std::fs::rename(path, &dest).ok()?;
+    Some(dest)
+}
+
 pub fn load(path: &Path) -> Option<(Vec<ChatSession>, usize)> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let v = emerag_json::parse(&text).ok()?;
+    let bytes = std::fs::read(path).ok()?;
+    let parsed = std::str::from_utf8(&bytes)
+        .map_err(|e| e.to_string())
+        .and_then(|text| emerag_json::parse(text).map_err(|e| e.to_string()));
+    let v = match parsed {
+        Ok(v) => v,
+        Err(e) => {
+            // A truncated or corrupt file used to be silently replaced by a
+            // fresh "main" session on the next save, losing every
+            // conversation. Keep it for recovery instead.
+            match quarantine(path) {
+                Some(dest) => eprintln!(
+                    "emerag: {} is unreadable ({e}); moved it to {} and started fresh",
+                    path.display(),
+                    dest.display()
+                ),
+                None => eprintln!("emerag: {} is unreadable ({e})", path.display()),
+            }
+            return None;
+        }
+    };
     let active = v.get("active").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
     let arr = v.get("sessions")?.as_array()?;
     let mut out = Vec::new();

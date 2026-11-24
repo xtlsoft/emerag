@@ -38,8 +38,12 @@ impl App {
                 agent.session_snapshot(),
             ));
         }
+        // A model given on the command line or in EMERAG_MODEL wins over
+        // the one remembered with the restored session.
+        let explicit_model =
+            cli.model.is_some() || emerag_util::sys::env_var("EMERAG_MODEL").is_some();
         if let Some(s) = sessions.get_mut(active) {
-            if s.model.is_empty() && !cfg.model.is_empty() {
+            if (s.model.is_empty() || explicit_model) && !cfg.model.is_empty() {
                 s.model = cfg.model.clone();
             }
             agent.set_session(s.session.clone());
@@ -1099,6 +1103,22 @@ fn display_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
     }
 }
 
+/// Write one-shot output to stdout. `println!` panics when the reader has
+/// gone away (`emerag -p ... | head -2`); a closed pipe just means nobody
+/// wants the rest, so exit quietly instead.
+fn out(text: &str) {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    let res = stdout
+        .write_all(text.as_bytes())
+        .and_then(|_| stdout.flush());
+    if let Err(e) = res {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+    }
+}
+
 /// One-shot mode: run a single turn and print machine-readable output on demand.
 pub fn run_one_shot(
     _cfg: &mut Config,
@@ -1112,7 +1132,7 @@ pub fn run_one_shot(
         .run_turn(prompt_text, &mut ui)
         .map_err(|e| e.to_string())?;
     if !cli.json_output && !ui.printed && !result.content.trim().is_empty() {
-        println!("{}", result.content);
+        out(&format!("{}\n", result.content));
     }
     if cli.json_output {
         let mut m = emerag_json::Map::new();
@@ -1130,10 +1150,10 @@ pub fn run_one_shot(
         u.insert("input".into(), emerag_json::json!(ui.usage.input_tokens));
         u.insert("output".into(), emerag_json::json!(ui.usage.output_tokens));
         m.insert("usage".into(), emerag_json::Value::Object(u));
-        println!(
-            "{}",
+        out(&format!(
+            "{}\n",
             emerag_json::to_string_pretty(&emerag_json::Value::Object(m))
-        );
+        ));
     }
     let _ = UiEvent::Assistant("");
     let _ = NullUi::default();
@@ -1169,8 +1189,7 @@ impl Ui for OneShotUi {
                 if !self.printed {
                     self.printed = true;
                 }
-                print!("{t}");
-                let _ = std::io::stdout().flush();
+                out(t);
             }
             emerag_agent::UiEvent::Reasoning(t) if self.stream => {
                 // Same reasoning visibility as the TUI, but on stderr so
@@ -1195,7 +1214,7 @@ impl Ui for OneShotUi {
                         self.reasoning_open = false;
                     }
                     if !t.is_empty() {
-                        println!();
+                        out("\n");
                     }
                 }
             }

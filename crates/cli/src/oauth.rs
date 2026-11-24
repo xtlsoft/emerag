@@ -136,6 +136,10 @@ fn callback_loop(
     while Instant::now() < deadline {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // On macOS and the BSDs an accepted socket inherits the
+                // listener's O_NONBLOCK; reads would fail with WouldBlock and
+                // the callback would be answered with 404.
+                let _ = stream.set_nonblocking(false);
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
                 let request = read_request(&mut stream);
                 if let Some(err) = callback_error(&request) {

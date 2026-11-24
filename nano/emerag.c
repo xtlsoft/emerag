@@ -1,5 +1,6 @@
 #include "tls.h"
 #include "crypto.h"
+#include <time.h>
 
 #ifdef _WIN32
 #define NANO_POPEN _popen
@@ -191,7 +192,7 @@ static int dechunk(const u8 *in, size_t len, Buf *out) {
         }
         off += 2;
         if (sz == 0) return 0;
-        if (off + sz > len) return -1;
+        if (off > len || sz > len - off) return -1;
         buf_put(out, in + off, sz);
         off += sz;
         if (off + 2 <= len && in[off] == '\r' && in[off+1] == '\n') off += 2;
@@ -210,12 +211,15 @@ static int http_post(Tls *t, const char *host, const char *path,
     size_t content_length = 0;
     int have_length = 0;
     int chunked = 0;
+    int terminated = 0;
+    time_t sent;
 
     buf_init(&req);
-    sprintf(line, "POST %s HTTP/1.1\r\n", path);
-    buf_puts(&req, line);
-    sprintf(line, "Host: %s\r\n", host);
-    buf_puts(&req, line);
+    buf_puts(&req, "POST ");
+    buf_puts(&req, path);
+    buf_puts(&req, " HTTP/1.1\r\nHost: ");
+    buf_puts(&req, host);
+    buf_puts(&req, "\r\n");
     buf_puts(&req, "User-Agent: emerag-nano/" NANO_VERSION "\r\n");
     buf_puts(&req, "Accept: application/json\r\n");
     buf_puts(&req, "Content-Type: application/json\r\n");
@@ -235,6 +239,7 @@ static int http_post(Tls *t, const char *host, const char *path,
         return -1;
     }
     buf_free(&req);
+    sent = time(NULL);
 
     for (;;) {
         n = tls_read(t, tmp, sizeof(tmp));
@@ -276,13 +281,21 @@ static int http_post(Tls *t, const char *host, const char *path,
             /* A terminating zero chunk near the end is enough for this client. */
             if (response->len >= 5) {
                 const u8 *q = response->p + response->len - 5;
-                if (memcmp(q, "0\r\n\r\n", 5) == 0) break;
+                if (memcmp(q, "0\r\n\r\n", 5) == 0) { terminated = 1; break; }
             }
         }
     }
     if (response->len == 0) {
         strncpy(err, "empty HTTP response", errlen - 1); err[errlen-1] = 0;
-        return -1;
+        /* An immediate close is a stale keep-alive connection and safe to
+         * retry. After a long wait the server may have processed the
+         * request, so a retry could run (and bill) it twice. */
+        return (time(NULL) - sent < 10) ? -1 : -2;
+    }
+    if ((have_length && !chunked && response->len < header_end + content_length) ||
+        (chunked && !terminated) || !header_end) {
+        strncpy(err, "HTTP response truncated", errlen - 1); err[errlen-1] = 0;
+        return -2;
     }
     return 0;
 }
@@ -363,6 +376,7 @@ static int post_with_reconnect(Tls **tls, const char *host, const char *ip,
                                char *err, size_t errlen) {
     int rc = http_post(*tls, host, path, key, body, bodylen, response, err, errlen);
     if (rc == 0) return 0;
+    if (rc != -1) return -1; /* the request may have been processed */
     /* Proxies and servers routinely close an HTTP/1.1 connection after one
      * response even when keep-alive was requested. Reconnect and retry once
      * instead of turning every later prompt into a TLS write failure. */
@@ -707,7 +721,7 @@ int main(int argc, char **argv) {
     msg_add(msgs, &nmsg, "system", SYSTEM_PROMPT);
     if (once) {
         msg_add(msgs, &nmsg, "user", once);
-        chat_turn(&tls, host, ip, port, path, model, key, msgs, &nmsg,
+        chat_turn(&tls, host, ipbuf[0] ? ipbuf : NULL, port, path, model, key, msgs, &nmsg,
                   ask, allow_shell, max_turns);
     } else {
         char line[4096];
@@ -754,7 +768,7 @@ int main(int argc, char **argv) {
                 continue;
             }
             msg_add(msgs, &nmsg, "user", line);
-            chat_turn(&tls, host, ip, port, path, model, key, msgs, &nmsg,
+            chat_turn(&tls, host, ipbuf[0] ? ipbuf : NULL, port, path, model, key, msgs, &nmsg,
                       ask, allow_shell, max_turns);
             if (nmsg >= NANO_MAX_MSGS - 1) {
                 /* keep system + last few */

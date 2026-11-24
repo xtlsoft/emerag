@@ -290,8 +290,10 @@ PY
 fi
 
 if [ -z "$DIR" ]; then
-    if mkdir -p "${HOME:-/nonexistent}/.local/bin" 2>/dev/null && [ -w "${HOME:-/nonexistent}/.local/bin" ]; then
-        DIR="${HOME}/.local/bin"
+    # Guard on HOME: root can create /nonexistent/.local/bin, and expanding
+    # an unset HOME aborts under set -u.
+    if [ -n "${HOME:-}" ] && mkdir -p "$HOME/.local/bin" 2>/dev/null && [ -w "$HOME/.local/bin" ]; then
+        DIR="$HOME/.local/bin"
     elif mkdir -p /usr/local/bin 2>/dev/null && [ -w /usr/local/bin ]; then
         DIR=/usr/local/bin
     else
@@ -299,8 +301,12 @@ if [ -z "$DIR" ]; then
     fi
 fi
 mkdir -p "$DIR" || die "cannot create $DIR"
-cp "$BIN" "$DIR/emerag" || die "cannot write $DIR/emerag (use --run for a read-only system)"
-chmod +x "$DIR/emerag" 2>/dev/null || true
+# Copy next to the target and rename over it: cp onto a running emerag fails
+# with "Text file busy", while a rename replaces it atomically.
+NEW="$DIR/.emerag.new.$$"
+cp "$BIN" "$NEW" || { rm -f "$NEW"; die "cannot write $DIR/emerag (use --run for a read-only system)"; }
+chmod +x "$NEW" 2>/dev/null || true
+mv -f "$NEW" "$DIR/emerag" || { rm -f "$NEW"; die "cannot replace $DIR/emerag"; }
 echo "installed: $DIR/emerag"
 case ":${PATH:-}:" in
     *":$DIR:"*) ;;

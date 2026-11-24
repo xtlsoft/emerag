@@ -30,9 +30,13 @@ int buf_reserve(Buf *b, size_t extra) {
     size_t need = b->len + extra;
     size_t cap;
     u8 *p;
+    if (need < b->len) return -1; /* overflow */
     if (need <= b->cap) return 0;
     cap = b->cap ? b->cap : 256;
-    while (cap < need) cap *= 2;
+    while (cap < need) {
+        if (cap > ((size_t)-1) / 2) { cap = need; break; }
+        cap *= 2;
+    }
     p = (u8 *)realloc(b->p, cap);
     if (!p) return -1;
     b->p = p;

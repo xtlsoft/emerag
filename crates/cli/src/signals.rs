@@ -39,9 +39,18 @@ pub fn install() {
             add: i32,
         ) -> i32;
     }
-    unsafe extern "system" fn on_ctrl(_ctrl_type: u32) -> i32 {
-        INTERRUPTED.store(true, Ordering::SeqCst);
-        1
+    unsafe extern "system" fn on_ctrl(ctrl_type: u32) -> i32 {
+        const CTRL_C_EVENT: u32 = 0;
+        const CTRL_BREAK_EVENT: u32 = 1;
+        match ctrl_type {
+            CTRL_C_EVENT | CTRL_BREAK_EVENT => {
+                INTERRUPTED.store(true, Ordering::SeqCst);
+                1
+            }
+            // Close, logoff and shutdown: let the default handler end the
+            // process instead of stalling the console for its timeout.
+            _ => 0,
+        }
     }
     unsafe {
         SetConsoleCtrlHandler(Some(on_ctrl), 1);

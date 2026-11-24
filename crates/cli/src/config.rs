@@ -189,7 +189,21 @@ impl Config {
                         cfg.apply_json(&v, &mut notes);
                         notes.push(format!("loaded {}", path.display()));
                     }
-                    Err(e) => notes.push(format!("config parse error in {}: {e}", path.display())),
+                    Err(e) => {
+                        // Say so even without --verbose, and keep the file:
+                        // the first-run wizard would otherwise save over it.
+                        let moved = crate::sessions::quarantine(&path);
+                        let msg = match &moved {
+                            Some(dest) => format!(
+                                "config parse error in {}: {e}; moved it to {}",
+                                path.display(),
+                                dest.display()
+                            ),
+                            None => format!("config parse error in {}: {e}", path.display()),
+                        };
+                        eprintln!("emerag: {msg}");
+                        notes.push(msg);
+                    }
                 },
                 Err(e) => notes.push(format!("cannot read {}: {e}", path.display())),
             }
@@ -539,7 +553,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             emerag_util::fsutil::ensure_dir(parent).map_err(|e| e.to_string())?;
         }
-        emerag_util::fsutil::write_text_atomic(path, &text).map_err(|e| e.to_string())?;
+        emerag_util::fsutil::write_text_private_atomic(path, &text).map_err(|e| e.to_string())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

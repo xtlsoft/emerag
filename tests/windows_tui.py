@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Exercise the Windows console UI through ConPTY.
 
-This checks that arrow input does not terminate the prompt, and that the
-two-digit provider selection works when arrows are unavailable.
+This checks that arrow input does not terminate the prompt, that arrows
+actually move a menu selection (a console in VT input mode used to deliver
+them as Esc plus literal "[A"), and that the two-digit provider selection
+works when arrows are unavailable.
 """
 import glob
 import sys
@@ -53,6 +55,23 @@ def main():
 
     proc = PtyProcess.spawn([exe, "--wizard", "--no-write"], dimensions=(40, 120))
     time.sleep(2)
+    drain(proc)
+    # Home, Down, Enter must pick provider 2 (DeepSeek account), whose
+    # endpoint step prints a line no other provider prints. ConPTY only
+    # repaints changed cells, so the menu text itself cannot be checked.
+    for seq in ("\x1b[H", "\x1b[B", "\r"):
+        proc.write(seq)
+        time.sleep(0.5)
+    output = drain(proc)
+    if "fixed for DeepSeek account" not in output:
+        print("FAIL: Home, Down, Enter did not select provider 2")
+        print(output[-1500:])
+        proc.terminate(force=True)
+        return 1
+    proc.terminate(force=True)
+
+    proc = PtyProcess.spawn([exe, "--wizard", "--no-write"], dimensions=(40, 120))
+    time.sleep(2)
     proc.write("11\r")
     time.sleep(1)
     output = drain(proc)
@@ -62,7 +81,7 @@ def main():
         proc.terminate(force=True)
         return 1
     proc.terminate(force=True)
-    print("ok: Windows prompt survived arrows; 11 selected Custom")
+    print("ok: arrows survive and move the selection; 11 selected Custom")
     return 0
 
 

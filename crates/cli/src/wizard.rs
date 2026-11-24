@@ -300,7 +300,7 @@ pub fn run(cfg: &mut Config, cli: &Cli, ui: &mut TermUi) -> Result<(), String> {
         println!("--no-write is active: configuration stays in memory for this run only.");
         return Ok(());
     }
-    if prompt::prompt_yes_no_caps(caps, "Save configuration?", true).unwrap_or(true) {
+    if prompt::prompt_yes_no_caps(caps, "Save configuration?", true).unwrap_or(false) {
         let path = Config::config_path();
         cfg.save(&path)
             .map_err(|e| format!("cannot save config: {e}"))?;

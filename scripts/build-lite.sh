@@ -15,8 +15,14 @@ TARGETS="${*:-x86_64-unknown-linux-musl aarch64-unknown-linux-musl armv7-unknown
 
 for t in $TARGETS; do
   echo "==> $t"
-  cargo build --manifest-path "$ROOT/Cargo.toml" --profile size --features lite \
-      --bin emerag --target "$t" 2>&1 | tail -2
+  LOG="$DIST/.build-lite-$t.log"
+  if ! cargo build --manifest-path "$ROOT/Cargo.toml" --profile size --features lite \
+      --bin emerag --target "$t" >"$LOG" 2>&1; then
+    tail -20 "$LOG"
+    echo "    FAILED $t (skipped; not copying a stale binary)"
+    continue
+  fi
+  tail -2 "$LOG"
   BIN="$ROOT/target/$t/size/emerag"
   if [ ! -f "$BIN" ]; then BIN="$BIN.exe"; fi
   [ -f "$BIN" ] || { echo "    missing $ROOT/target/$t/size/emerag"; continue; }
