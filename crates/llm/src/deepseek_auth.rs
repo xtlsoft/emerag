@@ -49,7 +49,9 @@ fn client() -> Client {
     Client {
         resolve: emerag_http::ResolveTable::new(),
         tls: TlsOptions::new(),
-        proxy: None,
+        // Honour HTTPS_PROXY/NO_PROXY like inference does, so sign-in works
+        // behind the same corporate proxy.
+        proxy: Some(emerag_http::ProxyConfig::from_env()),
         connect_timeout: Duration::from_secs(15),
         read_timeout: Duration::from_secs(30),
         max_redirects: 2,
@@ -78,8 +80,7 @@ fn platform_base(platform: &str) -> Result<String, Error> {
     let url = emerag_http::Url::parse(platform)
         .map_err(|e| Error::config(format!("bad DeepSeek platform origin: {e}")))?;
     if url.scheme != "https"
-        && !(url.scheme == "http"
-            && matches!(url.host.as_str(), "127.0.0.1" | "localhost" | "[::1]"))
+        && !(url.scheme == "http" && matches!(url.host.as_str(), "127.0.0.1" | "localhost" | "::1"))
     {
         return Err(Error::config("DeepSeek account login requires https"));
     }
@@ -329,6 +330,12 @@ fn _unused(_: &Map) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ipv6_loopback_platform_is_allowed() {
+        assert!(platform_base("http://[::1]:8080").is_ok());
+        assert!(platform_base("http://example.com").is_err());
+    }
 
     #[test]
     fn uuid_has_version_and_variant() {

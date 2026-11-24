@@ -194,8 +194,12 @@ fn query_depth(
         "[::]:0".parse().unwrap()
     };
     let socket = UdpSocket::bind(bind).map_err(|e| Error::new(format!("dns: bind: {e}")))?;
+    // Wait half the budget, retransmit once (UDP loses packets), and give up
+    // when the whole budget is spent instead of waiting twice the timeout
+    // with no retry.
+    let slice = (timeout / 2).max(Duration::from_millis(200));
     socket
-        .set_read_timeout(Some(timeout))
+        .set_read_timeout(Some(slice))
         .map_err(|e| Error::new(format!("dns: timeout: {e}")))?;
     let target = SocketAddr::new(server, 53);
     socket
@@ -206,6 +210,7 @@ fn query_depth(
         .map_err(|e| Error::new(format!("dns: send to {target}: {e}")))?;
     let mut buf = [0u8; 4096];
     let started = Instant::now();
+    let mut resent = false;
     loop {
         match socket.recv(&mut buf) {
             Ok(n) => {
@@ -244,8 +249,12 @@ fn query_depth(
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                if started.elapsed() >= timeout * 2 {
-                    return Err(Error::new("dns: timeout"));
+                if started.elapsed() >= timeout {
+                    return Err(Error::new(format!("dns: timeout waiting for {target}")));
+                }
+                if !resent {
+                    resent = true;
+                    let _ = socket.send(&packet);
                 }
                 continue;
             }

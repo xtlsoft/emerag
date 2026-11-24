@@ -273,27 +273,19 @@ impl Adapter {
         &self,
         resp: &mut Response,
         mut on_event: impl FnMut(&SseEventData) -> Result<bool, Error>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
+        // Returns true when the stream ended with [DONE] (or the handler
+        // stopped it), false when the connection simply closed.
         let mut decoder = SseDecoder::new();
         let mut buf = [0u8; 8192];
         let mut idle = 0u32;
         loop {
-            match resp.read_some(&mut buf) {
-                Ok(0) => break,
+            let (events, eof) = match resp.read_some(&mut buf) {
+                // A final event that lacked its blank line still counts.
+                Ok(0) => (decoder.feed(b"\n\n"), true),
                 Ok(n) => {
                     idle = 0;
-                    for ev in decoder.feed(&buf[..n]) {
-                        let data = SseEventData {
-                            event: ev.event.clone(),
-                            data: ev.data.clone(),
-                        };
-                        if data.data == "[DONE]" {
-                            return Ok(());
-                        }
-                        if !on_event(&data)? {
-                            return Ok(());
-                        }
-                    }
+                    (decoder.feed(&buf[..n]), false)
                 }
                 Err(e)
                     if e.kind() == std::io::ErrorKind::WouldBlock
@@ -307,9 +299,23 @@ impl Adapter {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(Error::network(format!("stream read: {e}"))),
+            };
+            for ev in events {
+                let data = SseEventData {
+                    event: ev.event.clone(),
+                    data: ev.data.clone(),
+                };
+                if data.data == "[DONE]" {
+                    return Ok(true);
+                }
+                if !on_event(&data)? {
+                    return Ok(true);
+                }
+            }
+            if eof {
+                return Ok(false);
             }
         }
-        Ok(())
     }
 
     fn stream_chat(
@@ -320,7 +326,7 @@ impl Adapter {
         let mut out = ChatResponse::default();
         let mut acc: Vec<ChatAcc> = Vec::new();
         let mut saw_done = false;
-        self.read_sse(resp, |ev| {
+        let done_marker = self.read_sse(resp, |ev| {
             let Ok(v) = emerag_json::parse(&ev.data) else {
                 return Ok(true);
             };
@@ -353,8 +359,7 @@ impl Adapter {
                     }
                     if let Some(calls) = delta.get("tool_calls").and_then(|c| c.as_array()) {
                         for call in calls {
-                            let idx =
-                                call.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                            let idx = stream_index(call.get("index"), acc.len())?;
                             while acc.len() <= idx {
                                 acc.push(ChatAcc::default());
                             }
@@ -384,7 +389,9 @@ impl Adapter {
             }
             Ok(true)
         })?;
-        let _ = saw_done;
+        if !saw_done && !done_marker {
+            return Err(truncated_stream());
+        }
         for (i, a) in acc.into_iter().enumerate() {
             if a.name.is_empty() {
                 continue;
@@ -424,7 +431,7 @@ impl Adapter {
         let mut out = ChatResponse::default();
         let mut args_by_id: Vec<(String, String)> = Vec::new();
         let mut completed_calls: Vec<ToolCall> = Vec::new();
-        self.read_sse(resp, |ev| {
+        let done_marker = self.read_sse(resp, |ev| {
             let Ok(v) = emerag_json::parse(&ev.data) else {
                 return Ok(true);
             };
@@ -517,6 +524,9 @@ impl Adapter {
             }
             Ok(true)
         })?;
+        if out.stop.is_none() && !done_marker {
+            return Err(truncated_stream());
+        }
         out.tool_calls = completed_calls;
         if out.stop.is_none() {
             out.stop = Some(if out.tool_calls.is_empty() {
@@ -538,7 +548,8 @@ impl Adapter {
     ) -> Result<ChatResponse, Error> {
         let mut out = ChatResponse::default();
         let mut blocks: Vec<AnthBlock> = Vec::new();
-        self.read_sse(resp, |ev| {
+        let mut saw_stop = false;
+        let done_marker = self.read_sse(resp, |ev| {
             let Ok(v) = emerag_json::parse(&ev.data) else {
                 return Ok(true);
             };
@@ -561,7 +572,7 @@ impl Adapter {
                     }
                 }
                 "content_block_start" => {
-                    let idx = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                    let idx = stream_index(v.get("index"), blocks.len())?;
                     while blocks.len() <= idx {
                         blocks.push(AnthBlock::default());
                     }
@@ -593,7 +604,7 @@ impl Adapter {
                     }
                 }
                 "content_block_delta" => {
-                    let idx = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                    let idx = stream_index(v.get("index"), blocks.len())?;
                     while blocks.len() <= idx {
                         blocks.push(AnthBlock::default());
                     }
@@ -647,6 +658,7 @@ impl Adapter {
                     }
                 }
                 "message_stop" => {
+                    saw_stop = true;
                     if out.stop.is_none() {
                         out.stop = Some(if out.tool_calls.is_empty() {
                             StopReason::EndTurn
@@ -670,6 +682,9 @@ impl Adapter {
             }
             Ok(true)
         })?;
+        if !saw_stop && out.stop.is_none() && !done_marker {
+            return Err(truncated_stream());
+        }
         if out.stop.is_none() {
             out.stop = Some(if out.tool_calls.is_empty() {
                 StopReason::EndTurn
@@ -680,6 +695,22 @@ impl Adapter {
         }
         Ok(out)
     }
+}
+
+/// The connection closed before the provider marked the reply complete.
+fn truncated_stream() -> Error {
+    Error::network("stream ended before the reply was complete (connection closed early)")
+}
+
+/// A streamed array index from the server. Indexes only ever grow by one, so
+/// anything far past the current length is malformed; rejecting it keeps a
+/// hostile "index": 4000000000 from allocating billions of entries.
+fn stream_index(v: Option<&emerag_json::Value>, len: usize) -> Result<usize, Error> {
+    let idx = v.and_then(|i| i.as_u64()).unwrap_or(0);
+    if idx > len as u64 + 64 {
+        return Err(Error::protocol(format!("stream index {idx} out of range")));
+    }
+    Ok(idx as usize)
 }
 
 impl Provider for Adapter {
@@ -1453,6 +1484,56 @@ mod tests {
     fn cfg(profile: &str, model: &str) -> ClientConfig {
         let p = find(profile).unwrap();
         ClientConfig::new(p, model)
+    }
+
+    fn adapter(kind: ApiKind) -> Adapter {
+        let mut c = cfg("deepseek", "m");
+        c.api = kind;
+        Adapter {
+            cfg: c.clone(),
+            http: HttpClient::default(),
+            kind,
+            session_id: "t".into(),
+        }
+    }
+
+    fn body(text: &str) -> Response {
+        Response {
+            status: 200,
+            reason: "OK".into(),
+            headers: Vec::new(),
+            url: emerag_http::Url::parse("http://x/").unwrap(),
+            body: Box::new(std::io::Cursor::new(text.as_bytes().to_vec())),
+            early_body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn truncated_chat_stream_is_an_error() {
+        let a = adapter(ApiKind::ChatCompletions);
+        let mut sink = |_e: StreamEvent| true;
+        let cut = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"half\"}}]}\n\n";
+        assert!(a.stream_chat(&mut body(cut), &mut sink).is_err());
+        // A last event without its blank line still completes the reply.
+        let ok = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n";
+        let r = a.stream_chat(&mut body(ok), &mut sink).unwrap();
+        assert_eq!(r.content, "hi");
+    }
+
+    #[test]
+    fn huge_stream_index_is_rejected() {
+        let a = adapter(ApiKind::ChatCompletions);
+        let mut sink = |_e: StreamEvent| true;
+        let evil = "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":4000000000,\"function\":{\"name\":\"x\"}}]}}]}\n\ndata: [DONE]\n\n";
+        assert!(a.stream_chat(&mut body(evil), &mut sink).is_err());
+    }
+
+    #[test]
+    fn truncated_anthropic_stream_is_an_error() {
+        let a = adapter(ApiKind::AnthropicMessages);
+        let mut sink = |_e: StreamEvent| true;
+        let cut = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"half\"}}\n\n";
+        assert!(a.stream_anthropic(&mut body(cut), &mut sink).is_err());
     }
 
     #[test]

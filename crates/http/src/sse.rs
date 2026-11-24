@@ -43,6 +43,8 @@ pub struct SseDecoder {
     last_retry: Option<u64>,
     event_bytes: usize,
     max_event_bytes: usize,
+    /// A UTF-8 BOM at the very start of a stream is ignored (per the spec).
+    seen_line: bool,
 }
 
 impl SseDecoder {
@@ -64,6 +66,7 @@ impl SseDecoder {
             last_retry: None,
             event_bytes: 0,
             max_event_bytes,
+            seen_line: false,
         }
     }
 
@@ -128,6 +131,12 @@ impl SseDecoder {
     }
 
     fn process_line(&mut self, line: &[u8], out: &mut Vec<SseEvent>) {
+        let line = if self.seen_line {
+            line
+        } else {
+            self.seen_line = true;
+            line.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(line)
+        };
         if line.is_empty() {
             self.dispatch(out);
             return;
@@ -222,10 +231,10 @@ impl SseDecoder {
             } else {
                 std::mem::take(&mut self.event)
             };
-            let mut data = std::mem::take(&mut self.data);
-            if data.ends_with('\n') {
-                data.pop();
-            }
+            // Lines are joined with '\n' and no trailing newline is added,
+            // so a trailing '\n' here came from an empty data line and is
+            // real content.
+            let data = std::mem::take(&mut self.data);
             out.push(SseEvent {
                 event,
                 data,
@@ -335,6 +344,14 @@ impl Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bom_and_trailing_empty_data_line() {
+        let mut d = SseDecoder::new();
+        let ev = d.feed(b"\xEF\xBB\xBFdata: a\ndata:\n\n");
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].data, "a\n");
+    }
 
     fn feed_all(dec: &mut SseDecoder, chunks: &[&[u8]]) -> Vec<SseEvent> {
         let mut events = Vec::new();
