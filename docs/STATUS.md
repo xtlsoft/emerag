@@ -42,6 +42,12 @@ nobody has to reverse-engineer a claim from the README.
   (530-630 KB, no CA bundle), full Rust (1.3-2.0 MB, 118-CA bundle).
 - **Platforms**: Linux static musl on x86_64/i686/aarch64/armv7/riscv64
   (qemu-smoke-tested), Windows x64/x86, s390x glibc.
+- **CI coverage**: tests run natively on Linux, macOS and Windows and under
+  qemu-user on aarch64, armv7, i686, riscv64 and big-endian s390x; release
+  binaries are smoke-run; FreeBSD, NetBSD, illumos, Android, ppc64le,
+  loongarch64 and Windows on ARM are compile-checked; Rust 1.74 (MSRV) and
+  1.77.2 (Windows 7) are compile-checked. Raw mode covers Linux (all arches),
+  macOS, the BSDs and illumos.
 - **Offline release**: self-extracting bundle with SHA-256 trailer, extraction,
   local up/status/stop/models, packaging script.
 
@@ -62,8 +68,10 @@ nobody has to reverse-engineer a claim from the README.
   UPX-packed binaries can be flagged by some scanners. The installer cannot
   execute from a noexec filesystem unless /dev/shm, another exec tmpfs, or
   Python memfd is available.
-- **Session files**: concurrent emerag processes writing the same
-  sessions.json are not locked; the last writer wins.
+- **Session files**: concurrent emerag processes sharing sessions.json
+  take a lock file and merge per session (sessions created or deleted in one
+  process show up in the other). Two processes editing the *same*
+  conversation at once still resolve it by last writer wins.
 - **Nano**: C89/VC6 source. Linux x86_64/ARM64/ARMv7/i686/RISC-V static-musl
   and Windows x64/x86 PE builds are produced. DeepSeek TLS 1.3, Chinese input,
   reconnect-after-close and the mock shell loop were tested; Windows x64 runs

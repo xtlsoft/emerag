@@ -16,22 +16,34 @@ use emerag_util::sync::CancelToken;
 
 #[derive(Clone)]
 pub struct ChatSession {
+    /// Stable identity used to merge with other emerag processes that share
+    /// the same sessions file.
+    pub id: String,
     pub name: String,
     pub model: String,
     pub session: Session,
     pub busy: Option<usize>,
     /// Events produced while this session was not the visible one.
     pub output: Vec<OwnedEvent>,
+    /// Serialized form at the last load or save. A session whose current form
+    /// still equals this has not been changed by this process.
+    saved: Option<String>,
+    /// Deleted by another process while unchanged here: not written back
+    /// unless this process changes it again.
+    gone: bool,
 }
 
 impl ChatSession {
     pub fn new(name: impl Into<String>, model: impl Into<String>, session: Session) -> Self {
         ChatSession {
+            id: emerag_util::rand::id(12),
             name: name.into(),
             model: model.into(),
             session,
             busy: None,
             output: Vec::new(),
+            saved: None,
+            gone: false,
         }
     }
 
@@ -199,27 +211,199 @@ impl Ui for WorkerUi {
     }
 }
 
-pub fn save(path: &Path, sessions: &[ChatSession], active: usize) -> Result<(), String> {
-    let mut root = Map::new();
-    root.insert("version".into(), Value::Number(emerag_json::Number::Int(1)));
-    root.insert(
-        "active".into(),
-        Value::Number(emerag_json::Number::Int(active as i64)),
-    );
-    let mut arr = Vec::new();
-    for s in sessions {
-        let mut o = Map::new();
-        o.insert("name".into(), Value::String(s.name.clone()));
-        o.insert("model".into(), Value::String(s.model.clone()));
-        o.insert("session".into(), session_json(&s.session));
-        arr.push(Value::Object(o));
+fn entry_json(s: &ChatSession) -> Value {
+    let mut o = Map::new();
+    o.insert("id".into(), Value::String(s.id.clone()));
+    o.insert("name".into(), Value::String(s.name.clone()));
+    o.insert("model".into(), Value::String(s.model.clone()));
+    o.insert("session".into(), session_json(&s.session));
+    Value::Object(o)
+}
+
+fn entry_from_json(item: &Value) -> ChatSession {
+    let name = item
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("session");
+    let model = item.get("model").and_then(|x| x.as_str()).unwrap_or("");
+    let session = item
+        .get("session")
+        .map(session_from_json)
+        .unwrap_or_default();
+    let mut s = ChatSession::new(name, model, session);
+    if let Some(id) = item
+        .get("id")
+        .and_then(|x| x.as_str())
+        .filter(|x| !x.is_empty())
+    {
+        s.id = id.to_string();
     }
-    root.insert("sessions".into(), Value::Array(arr));
-    let text = emerag_json::to_string_pretty(&Value::Object(root));
+    s.saved = Some(emerag_json::to_string(&entry_json(&s)));
+    s
+}
+
+/// Exclusive lock on the sessions file, held while it is read, merged and
+/// rewritten. A lock file (created with create_new) works on every platform
+/// and filesystem without FFI; one left behind by a crashed process is taken
+/// over once it is older than STALE.
+struct FileLock {
+    path: std::path::PathBuf,
+}
+
+impl FileLock {
+    const STALE: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn acquire(target: &Path) -> Option<FileLock> {
+        let mut name = target.file_name()?.to_os_string();
+        name.push(".lock");
+        let path = target.with_file_name(name);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut f) => {
+                    use std::io::Write;
+                    let _ = write!(f, "{}", std::process::id());
+                    return Some(FileLock { path });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|age| age > Self::STALE);
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return None;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                // Read-only directory and the like: save without a lock
+                // rather than not at all.
+                Err(_) => return None,
+            }
+        }
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Entries currently on disk, by id. Missing or unreadable files count as
+/// empty here; [load] is what reports and quarantines a corrupt file.
+fn read_disk(path: &Path) -> Vec<ChatSession> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(v) = emerag_json::parse(&text) else {
+        return Vec::new();
+    };
+    v.get("sessions")
+        .and_then(|x| x.as_array())
+        .map(|arr| arr.iter().map(entry_from_json).collect())
+        .unwrap_or_default()
+}
+
+/// Save the sessions, merging with whatever other emerag processes wrote to
+/// the same file since this one last loaded or saved it:
+///
+/// * a session changed here is written as it is here (per session, last
+///   writer wins);
+/// * a session not changed here takes the version on disk, so another
+///   process's progress is not overwritten with a stale copy; the active
+///   and busy sessions keep their in-memory state, the rest are refreshed;
+/// * sessions created elsewhere are appended to `sessions`;
+/// * ids in `deleted` are removed from the file and `deleted` is cleared;
+/// * a session deleted elsewhere and unchanged here is not written back.
+///
+/// Indices of existing entries in `sessions` never change, so `active` and
+/// background-turn indices stay valid.
+pub fn save(
+    path: &Path,
+    sessions: &mut Vec<ChatSession>,
+    active: usize,
+    deleted: &mut Vec<String>,
+) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         emerag_util::fsutil::ensure_dir(parent).map_err(|e| e.to_string())?;
     }
-    emerag_util::fsutil::write_text_atomic(path, &text).map_err(|e| e.to_string())?;
+    let _lock = FileLock::acquire(path);
+    let disk = read_disk(path);
+    let mut on_disk: std::collections::HashMap<String, ChatSession> =
+        disk.iter().cloned().map(|s| (s.id.clone(), s)).collect();
+
+    let mut arr = Vec::new();
+    for (i, s) in sessions.iter_mut().enumerate() {
+        let current = entry_json(s);
+        let text = emerag_json::to_string(&current);
+        let changed = s.saved.as_deref() != Some(text.as_str());
+        let theirs = on_disk.remove(&s.id);
+        if changed {
+            s.gone = false;
+            arr.push(current);
+            s.saved = Some(text);
+            continue;
+        }
+        match theirs {
+            Some(other) => {
+                let keep_mine = i == active || s.busy.is_some();
+                let other_json = entry_json(&other);
+                if !keep_mine {
+                    s.name = other.name;
+                    s.model = other.model;
+                    s.session = other.session;
+                }
+                s.saved = Some(emerag_json::to_string(&other_json));
+                arr.push(other_json);
+            }
+            None if s.saved.is_some() => {
+                // Was on disk, unchanged here, now gone: deleted elsewhere.
+                s.gone = true;
+            }
+            None => {
+                if !s.gone {
+                    arr.push(current);
+                    s.saved = Some(text);
+                }
+            }
+        }
+    }
+    // Sessions another process created.
+    for other in disk {
+        if on_disk.contains_key(&other.id) && !deleted.contains(&other.id) {
+            arr.push(entry_json(&other));
+            sessions.push(other);
+        }
+    }
+    deleted.clear();
+
+    let active_id = sessions
+        .get(active)
+        .map(|s| s.id.clone())
+        .unwrap_or_default();
+    let active_pos = arr
+        .iter()
+        .position(|e| e.get("id").and_then(|x| x.as_str()) == Some(active_id.as_str()))
+        .unwrap_or(0);
+    let mut root = Map::new();
+    root.insert("version".into(), Value::Number(emerag_json::Number::Int(2)));
+    root.insert(
+        "active".into(),
+        Value::Number(emerag_json::Number::Int(active_pos as i64)),
+    );
+    root.insert("active_id".into(), Value::String(active_id));
+    root.insert("sessions".into(), Value::Array(arr));
+    let text = emerag_json::to_string_pretty(&Value::Object(root));
+    emerag_util::fsutil::write_text_private_atomic(path, &text).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -228,30 +412,55 @@ pub fn save(path: &Path, sessions: &[ChatSession], active: usize) -> Result<(), 
     Ok(())
 }
 
+/// Move an unreadable state file aside so the next save cannot destroy it.
+/// Returns where it went.
+pub fn quarantine(path: &Path) -> Option<std::path::PathBuf> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut name = path.file_name()?.to_os_string();
+    name.push(format!(".corrupt-{ts}"));
+    let dest = path.with_file_name(name);
+    std::fs::rename(path, &dest).ok()?;
+    Some(dest)
+}
+
 pub fn load(path: &Path) -> Option<(Vec<ChatSession>, usize)> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let v = emerag_json::parse(&text).ok()?;
-    let active = v.get("active").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let bytes = std::fs::read(path).ok()?;
+    let parsed = std::str::from_utf8(&bytes)
+        .map_err(|e| e.to_string())
+        .and_then(|text| emerag_json::parse(text).map_err(|e| e.to_string()));
+    let v = match parsed {
+        Ok(v) => v,
+        Err(e) => {
+            // A truncated or corrupt file used to be silently replaced by a
+            // fresh "main" session on the next save, losing every
+            // conversation. Keep it for recovery instead.
+            match quarantine(path) {
+                Some(dest) => eprintln!(
+                    "emerag: {} is unreadable ({e}); moved it to {} and started fresh",
+                    path.display(),
+                    dest.display()
+                ),
+                None => eprintln!("emerag: {} is unreadable ({e})", path.display()),
+            }
+            return None;
+        }
+    };
     let arr = v.get("sessions")?.as_array()?;
-    let mut out = Vec::new();
-    for item in arr {
-        let name = item
-            .get("name")
-            .and_then(|x| x.as_str())
-            .unwrap_or("session");
-        let model = item.get("model").and_then(|x| x.as_str()).unwrap_or("");
-        let session = item
-            .get("session")
-            .map(session_from_json)
-            .unwrap_or_default();
-        out.push(ChatSession::new(name, model, session));
-    }
+    let out: Vec<ChatSession> = arr.iter().map(entry_from_json).collect();
     if out.is_empty() {
-        None
-    } else {
-        let idx = active.min(out.len() - 1);
-        Some((out, idx))
+        return None;
     }
+    let by_id = v
+        .get("active_id")
+        .and_then(|x| x.as_str())
+        .and_then(|id| out.iter().position(|s| s.id == id));
+    let active = by_id
+        .unwrap_or_else(|| v.get("active").and_then(|x| x.as_u64()).unwrap_or(0) as usize)
+        .min(out.len() - 1);
+    Some((out, active))
 }
 
 fn session_json(s: &Session) -> Value {
@@ -386,6 +595,67 @@ fn message_from_json(v: &Value) -> Option<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tmp_file(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("emerag-sess-{tag}-{}", emerag_util::rand::id(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("sessions.json")
+    }
+
+    fn user(text: &str) -> Message {
+        Message::user(text)
+    }
+
+    #[test]
+    fn concurrent_processes_merge_instead_of_clobbering() {
+        let path = tmp_file("merge");
+        // Process A creates two sessions.
+        let mut a = vec![
+            ChatSession::new("main", "m", Session::new()),
+            ChatSession::new("side", "m", Session::new()),
+        ];
+        let mut del_a = Vec::new();
+        save(&path, &mut a, 0, &mut del_a).unwrap();
+
+        // Process B starts from the same file.
+        let (mut b, b_active) = load(&path).unwrap();
+        let mut del_b = Vec::new();
+        assert_eq!(b.len(), 2);
+
+        // A works in "side"; B works in "main" and adds a session.
+        a[1].session.push(user("from A"));
+        save(&path, &mut a, 1, &mut del_a).unwrap();
+        b[0].session.push(user("from B"));
+        b.push(ChatSession::new("third", "m", Session::new()));
+        save(&path, &mut b, b_active, &mut del_b).unwrap();
+
+        let (disk, _) = load(&path).unwrap();
+        let names: Vec<_> = disk.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["main", "side", "third"]);
+        assert_eq!(disk[0].session.messages.len(), 1, "B's work in main kept");
+        assert_eq!(disk[1].session.messages.len(), 1, "A's work in side kept");
+        // B's unchanged, inactive copy of "side" picked up A's message.
+        assert_eq!(b[1].session.messages.len(), 1);
+
+        // A saves again: adopts "third", keeps B's main, keeps its own side.
+        save(&path, &mut a, 1, &mut del_a).unwrap();
+        assert_eq!(a.len(), 3);
+        let (disk, active) = load(&path).unwrap();
+        assert_eq!(disk.len(), 3);
+        assert_eq!(disk[active].name, "side");
+        assert_eq!(disk[0].session.messages.len(), 1);
+
+        // B deletes "third"; A must not resurrect it.
+        let third = b.remove(2);
+        del_b.push(third.id);
+        save(&path, &mut b, 0, &mut del_b).unwrap();
+        save(&path, &mut a, 1, &mut del_a).unwrap();
+        let (disk, _) = load(&path).unwrap();
+        assert_eq!(disk.len(), 2);
+        assert!(!path.with_file_name("sessions.json.lock").exists());
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
 
     #[test]
     fn session_json_roundtrip() {

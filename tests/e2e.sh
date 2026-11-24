@@ -86,6 +86,39 @@ echo "== doctor =="
 "$BIN" --doctor --no-write > /tmp/e2e-doctor.out 2>&1
 check "doctor runs" /tmp/e2e-doctor.out "emerag"
 
+echo "== closed stdin never approves a tool =="
+MARKER="$TMP/approved-by-eof"
+rm -f "$MARKER"
+start tests/mock_shell_tool.py 18209 "$MARKER"
+printf 'run it\n' | EMERAG_CONFIG_DIR="$TMP/cfg-eof" "$BIN" --base-url http://127.0.0.1:18209/v1 \
+  --api chat --model m --mode ask --no-write > /tmp/e2e-eof.out 2>&1 || true
+if [ -e "$MARKER" ]; then
+  FAIL=$((FAIL+1)); echo "FAIL approval at EOF ran the shell command"; sed -n '1,40p' /tmp/e2e-eof.out
+else
+  PASS=$((PASS+1)); echo "ok   approval at EOF is a no"
+fi
+"$BIN" --base-url http://127.0.0.1:18209/v1 --api chat --model m --mode ask --no-write \
+  -p "run it" < /dev/null > /tmp/e2e-eof1.out 2>&1 || true
+if [ -e "$MARKER" ]; then
+  FAIL=$((FAIL+1)); echo "FAIL one-shot ask mode ran the shell command"
+else
+  PASS=$((PASS+1)); echo "ok   one-shot ask mode denies the shell command"
+fi
+
+echo "== stdin prompt =="
+printf 'read tests/data/hello.txt\n' | "$BIN" --base-url http://127.0.0.1:18201/v1 --api chat \
+  --model mock-model --mode auto --no-write --stdin > /tmp/e2e-stdin.out 2>&1
+check "--stdin is a one-shot prompt" /tmp/e2e-stdin.out "The file says"
+
+echo "== closed stdout pipe =="
+"$BIN" --base-url http://127.0.0.1:18201/v1 --api chat --model mock-model \
+  --mode auto --no-write -p "read tests/data/hello.txt" 2>/tmp/e2e-pipe.err | head -c 1 >/dev/null
+if grep -q panicked /tmp/e2e-pipe.err; then
+  FAIL=$((FAIL+1)); echo "FAIL broken pipe panicked"; cat /tmp/e2e-pipe.err
+else
+  PASS=$((PASS+1)); echo "ok   broken pipe exits quietly"
+fi
+
 rm -rf "$TMP"
 echo
 echo "passed: $PASS  failed: $FAIL"

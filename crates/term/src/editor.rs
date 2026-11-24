@@ -623,12 +623,16 @@ impl LineEditor {
 
     // -- rendering ---------------------------------------------------------
 
+    /// Columns the editor may draw in. The last column is left empty: on
+    /// terminals without deferred wrap (legacy Windows console, many serial
+    /// terminals) a cursor in that column has already moved to the next row,
+    /// and every redraw would then start a new line.
     fn term_width(&self) -> usize {
         let w = self.caps.width as usize;
         if w == 0 {
-            80
+            79
         } else {
-            w
+            w.saturating_sub(1).max(1)
         }
     }
 

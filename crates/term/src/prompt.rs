@@ -55,8 +55,10 @@ fn yes_no_raw(question: &str, default: bool) -> Result<bool> {
         let key = match read_key() {
             Ok(key) => key,
             Err(e) if e.kind() == ErrorKind::EndOfInput => {
-                writeln!(out).map_err(Error::from)?;
-                return Ok(default);
+                // Input closed: never treat that as an answer. Approvals in
+                // particular must not turn into "yes" when stdin goes away.
+                out.write_all(b"\r\n").map_err(Error::from)?;
+                return Err(e);
             }
             Err(e) => return Err(e),
         };
@@ -102,7 +104,7 @@ fn yes_no_cooked(_caps: Capabilities, question: &str, default: bool) -> Result<b
         out.flush().map_err(Error::from)?;
         let mut line = String::new();
         match io::stdin().read_line(&mut line) {
-            Ok(0) => return Ok(default),
+            Ok(0) => return Err(Error::end_of_input()),
             Ok(_) => {
                 if let Some(answer) = parse_yes_no(&line, default) {
                     return Ok(answer);
@@ -156,8 +158,10 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
         let key = match read_key() {
             Ok(key) => key,
             Err(e) if e.kind() == ErrorKind::EndOfInput => {
+                // EOF is not a selection: the default of an approval menu is
+                // "yes", and a closed stdin must not approve anything.
                 out.write_all(b"\r\n").map_err(Error::from)?;
-                return Ok(selected);
+                return Err(e);
             }
             Err(e) => return Err(e),
         };
@@ -167,38 +171,22 @@ fn choice_raw(caps: Capabilities, title: &str, labels: &[String], default: usize
                 if selected + 1 < labels.len() {
                     selected += 1;
                 }
-                if caps.ansi {
-                    draw_choice(
-                        &mut out, caps, title, labels, selected, &typed, false, &mut drawn,
-                    )?;
-                }
+                show_selection(&mut out, caps, title, labels, selected, &mut drawn)?;
             }
             KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp if !key.ctrl => {
                 typed.clear();
                 selected = selected.saturating_sub(1);
-                if caps.ansi {
-                    draw_choice(
-                        &mut out, caps, title, labels, selected, &typed, false, &mut drawn,
-                    )?;
-                }
+                show_selection(&mut out, caps, title, labels, selected, &mut drawn)?;
             }
             KeyCode::Home => {
                 typed.clear();
                 selected = 0;
-                if caps.ansi {
-                    draw_choice(
-                        &mut out, caps, title, labels, selected, &typed, false, &mut drawn,
-                    )?;
-                }
+                show_selection(&mut out, caps, title, labels, selected, &mut drawn)?;
             }
             KeyCode::End => {
                 typed.clear();
                 selected = labels.len() - 1;
-                if caps.ansi {
-                    draw_choice(
-                        &mut out, caps, title, labels, selected, &typed, false, &mut drawn,
-                    )?;
-                }
+                show_selection(&mut out, caps, title, labels, selected, &mut drawn)?;
             }
             KeyCode::Char(c) if c.is_ascii_digit() && !key.ctrl => {
                 if labels.len() > 9 {
@@ -273,14 +261,21 @@ fn draw_choice<W: Write>(
     drawn: &mut usize,
 ) -> Result<()> {
     let width = choice_width(caps);
-    let mut lines = Vec::with_capacity(labels.len() + 1);
-    lines.push(fit(caps, title, width));
-    for (i, label) in labels.iter().enumerate() {
+    let numbered = labels.len() > 9;
+    let (start, end) = choice_window(caps, labels.len(), selected, numbered);
+    let mut lines = Vec::with_capacity(end - start + 2);
+    if start > 0 || end < labels.len() {
+        let head = format!("{title} ({}-{} of {})", start + 1, end, labels.len());
+        lines.push(fit(caps, &head, width));
+    } else {
+        lines.push(fit(caps, title, width));
+    }
+    for (i, label) in labels.iter().enumerate().take(end).skip(start) {
         let marker = if i == selected { "> " } else { "  " };
         let line = format!("{marker}{}. {}", i + 1, label);
         lines.push(fit(caps, &line, width));
     }
-    if labels.len() > 9 {
+    if numbered {
         let hint = format!("  type the number and press Enter: {typed}");
         lines.push(fit(caps, &hint, width));
     }
@@ -297,6 +292,56 @@ fn draw_choice<W: Write>(
     out.flush().map_err(Error::from)?;
     *drawn = lines.len();
     Ok(())
+}
+
+/// Which options are visible. With ANSI the menu is redrawn in place, which
+/// only works while it fits on the screen: a long model list on a 24-line
+/// console would otherwise scroll on every key press and smear copies of the
+/// menu. Show a window around the selection instead. Without ANSI nothing is
+/// redrawn, so the whole list is printed once.
+fn choice_window(
+    caps: Capabilities,
+    len: usize,
+    selected: usize,
+    numbered: bool,
+) -> (usize, usize) {
+    if !caps.ansi {
+        return (0, len);
+    }
+    let rows = (caps.height as usize).max(5);
+    // Title, optional hint line, and the line the cursor rests on.
+    let room = rows.saturating_sub(2 + usize::from(numbered)).max(1);
+    if len <= room {
+        return (0, len);
+    }
+    let start = selected.saturating_sub(room / 2).min(len - room);
+    (start, start + room)
+}
+
+/// Reflect a moved selection. With ANSI the menu is redrawn. Without it (a
+/// dumb or serial terminal in raw mode) the current choice is echoed on the
+/// line below the menu, so arrow keys and j/k never change the answer
+/// silently.
+fn show_selection<W: Write>(
+    out: &mut W,
+    caps: Capabilities,
+    title: &str,
+    labels: &[String],
+    selected: usize,
+    drawn: &mut usize,
+) -> Result<()> {
+    if caps.ansi {
+        return draw_choice(out, caps, title, labels, selected, "", false, drawn);
+    }
+    let width = choice_width(caps);
+    let line = fit(
+        caps,
+        &format!("> {}. {}", selected + 1, labels[selected]),
+        width,
+    );
+    let pad = width.saturating_sub(crate::width::display_width(&line));
+    write!(out, "\r{line}{}\r{line}", " ".repeat(pad)).map_err(Error::from)?;
+    out.flush().map_err(Error::from)
 }
 
 /// Show the number typed so far. With ANSI the whole menu is redrawn with the
@@ -361,7 +406,7 @@ fn choice_cooked(
     loop {
         let mut line = String::new();
         match io::stdin().read_line(&mut line) {
-            Ok(0) => return Ok(default),
+            Ok(0) => return Err(Error::end_of_input()),
             Ok(_) => {
                 let text = line.trim();
                 if text.is_empty() {
@@ -387,12 +432,16 @@ fn choice_cooked(
     }
 }
 
+/// Usable columns. The last column is never written: terminals without
+/// deferred wrap (the legacy Windows console, many serial terminals) move to
+/// the next row after it, so a full-width line followed by CR LF would leave
+/// a blank line and break in-place redraws.
 fn choice_width(caps: Capabilities) -> usize {
     let w = caps.width as usize;
     if w == 0 {
-        80
+        79
     } else {
-        w
+        w.saturating_sub(1).max(1)
     }
 }
 

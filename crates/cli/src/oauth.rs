@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub fn login_deepseek(cfg: &mut Config, save: bool) -> Result<(), String> {
+    crate::providers::configure_auth_network(cfg)?;
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("cannot open the local sign-in callback listener: {e}"))?;
     let port = listener
@@ -117,6 +118,7 @@ pub fn logout(cfg: &mut Config) -> Result<(), String> {
         return Ok(());
     }
     let platform = "https://platform.deepseek.com";
+    let _ = crate::providers::configure_auth_network(cfg);
     let token = cfg.account_token.clone();
     cfg.account_token.clear();
     if !cfg.no_write {
@@ -136,6 +138,10 @@ fn callback_loop(
     while Instant::now() < deadline {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // On macOS and the BSDs an accepted socket inherits the
+                // listener's O_NONBLOCK; reads would fail with WouldBlock and
+                // the callback would be answered with 404.
+                let _ = stream.set_nonblocking(false);
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
                 let request = read_request(&mut stream);
                 if let Some(err) = callback_error(&request) {

@@ -138,9 +138,21 @@ fn android_prop(key: &str) -> Option<String> {
 /// socket addresses; the DNS query itself is port-independent.
 pub fn resolve(
     host: &str,
+    port: u16,
+    servers: &[IpAddr],
+    timeout: Duration,
+) -> Result<Vec<IpAddr>> {
+    resolve_cancellable(host, port, servers, timeout, None)
+}
+
+/// [resolve] that gives up as soon as `cancel` fires (checked every 250 ms),
+/// so Ctrl+C is not stuck behind dead nameservers.
+pub fn resolve_cancellable(
+    host: &str,
     _port: u16,
     servers: &[IpAddr],
     timeout: Duration,
+    cancel: Option<&emerag_util::sync::CancelToken>,
 ) -> Result<Vec<IpAddr>> {
     if servers.is_empty() {
         return Err(Error::new("no DNS servers configured"));
@@ -149,12 +161,12 @@ pub fn resolve(
     for server in servers.iter().take(4) {
         // Prefer A: IPv6 is often unroutable and asking both on every server
         // doubles the worst-case wait on a rescue network.
-        match query(host, TYPE_A, *server, timeout) {
+        match query(host, TYPE_A, *server, timeout, cancel) {
             Ok(ips) if !ips.is_empty() => return Ok(ips),
             Ok(_) => {}
             Err(e) => last = format!("{e}"),
         }
-        match query(host, TYPE_AAAA, *server, timeout) {
+        match query(host, TYPE_AAAA, *server, timeout, cancel) {
             Ok(ips) if !ips.is_empty() => return Ok(ips),
             Ok(_) => {}
             Err(e) => last = format!("{e}"),
@@ -175,17 +187,31 @@ pub fn resolve(
     )))
 }
 
-fn query(host: &str, qtype: u16, server: IpAddr, timeout: Duration) -> Result<Vec<IpAddr>> {
-    query_depth(host, qtype, server, timeout, 0)
+fn query(
+    host: &str,
+    qtype: u16,
+    server: IpAddr,
+    timeout: Duration,
+    cancel: Option<&emerag_util::sync::CancelToken>,
+) -> Result<Vec<IpAddr>> {
+    query_depth(host, qtype, server, timeout, cancel, 0)
 }
+
+/// Poll interval for the cancel token while waiting for a DNS reply.
+const CANCEL_POLL: Duration = Duration::from_millis(250);
 
 fn query_depth(
     host: &str,
     qtype: u16,
     server: IpAddr,
     timeout: Duration,
+    cancel: Option<&emerag_util::sync::CancelToken>,
     depth: u8,
 ) -> Result<Vec<IpAddr>> {
+    let cancelled = || cancel.is_some_and(|c| c.is_cancelled());
+    if cancelled() {
+        return Err(Error::new("dns: cancelled"));
+    }
     let id = (emerag_util::rand::u64().unwrap_or(0) & 0xffff) as u16;
     let packet = build_query(id, host, qtype)?;
     let bind: SocketAddr = if server.is_ipv4() {
@@ -194,8 +220,12 @@ fn query_depth(
         "[::]:0".parse().unwrap()
     };
     let socket = UdpSocket::bind(bind).map_err(|e| Error::new(format!("dns: bind: {e}")))?;
+    // Wait half the budget, retransmit once (UDP loses packets), and give up
+    // when the whole budget is spent instead of waiting twice the timeout
+    // with no retry.
+    let slice = (timeout / 2).max(Duration::from_millis(200));
     socket
-        .set_read_timeout(Some(timeout))
+        .set_read_timeout(Some(slice.min(CANCEL_POLL)))
         .map_err(|e| Error::new(format!("dns: timeout: {e}")))?;
     let target = SocketAddr::new(server, 53);
     socket
@@ -206,6 +236,7 @@ fn query_depth(
         .map_err(|e| Error::new(format!("dns: send to {target}: {e}")))?;
     let mut buf = [0u8; 4096];
     let started = Instant::now();
+    let mut resent = false;
     loop {
         match socket.recv(&mut buf) {
             Ok(n) => {
@@ -234,7 +265,7 @@ fn query_depth(
                 if ips.is_empty() {
                     if let Some(target) = cname {
                         if depth < 3 && target != host {
-                            return query_depth(&target, qtype, server, timeout, depth + 1);
+                            return query_depth(&target, qtype, server, timeout, cancel, depth + 1);
                         }
                     }
                 }
@@ -244,8 +275,16 @@ fn query_depth(
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                if started.elapsed() >= timeout * 2 {
-                    return Err(Error::new("dns: timeout"));
+                if cancelled() {
+                    return Err(Error::new("dns: cancelled"));
+                }
+                let waited = started.elapsed();
+                if waited >= timeout {
+                    return Err(Error::new(format!("dns: timeout waiting for {target}")));
+                }
+                if !resent && waited >= slice {
+                    resent = true;
+                    let _ = socket.send(&packet);
                 }
                 continue;
             }
@@ -405,6 +444,44 @@ fn _tcp_query(host: &str, qtype: u16, server: IpAddr, timeout: Duration) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lookup_stops_when_cancelled() {
+        let token = emerag_util::sync::CancelToken::new();
+        token.cancel();
+        let servers = ["192.0.2.1".parse().unwrap()];
+        let err = resolve_cancellable(
+            "example.com",
+            443,
+            &servers,
+            Duration::from_secs(10),
+            Some(&token),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("cancelled"), "{err}");
+
+        // Cancelled mid-wait: a TEST-NET server never answers, so only the
+        // token can end this before the 10 s budget.
+        let token = emerag_util::sync::CancelToken::new();
+        let t2 = token.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            t2.cancel();
+        });
+        let started = Instant::now();
+        let _ = resolve_cancellable(
+            "example.com",
+            443,
+            &servers,
+            Duration::from_secs(10),
+            Some(&token),
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn query_encodes_labels_and_type() {

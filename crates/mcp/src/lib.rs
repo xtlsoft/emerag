@@ -145,7 +145,16 @@ impl McpClient {
     /// Spawn the server and perform the MCP handshake (initialize +
     /// notifications/initialized + tools/list).
     pub fn start(config: ServerConfig) -> Result<Self> {
-        let mut cmd = Command::new(&config.command);
+        // std only appends ".exe" when searching PATH, so "npx" would never
+        // find npx.cmd on Windows. Resolve through PATH/PATHEXT ourselves.
+        // A path (./server) is left alone: it is relative to config.cwd.
+        let bare = !config.command.contains(['/', '\\']);
+        let program = bare
+            .then(|| emerag_util::sys::which(&config.command))
+            .flatten()
+            .map(|p| p.into_os_string())
+            .unwrap_or_else(|| config.command.clone().into());
+        let mut cmd = Command::new(program);
         cmd.args(&config.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -182,9 +191,20 @@ impl McpClient {
         std::thread::Builder::new()
             .name(format!("mcp-{}", sanitize(&server_name)))
             .spawn(move || {
-                let reader = BufReader::new(stdout);
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                // Read raw lines: lines() fails with InvalidData on one
+                // non-UTF-8 byte, which used to end this thread and leave
+                // every later request to time out.
+                let mut reader = BufReader::new(stdout);
+                let mut raw = Vec::new();
+                loop {
+                    raw.clear();
+                    match reader.read_until(b'\n', &mut raw) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => break,
+                    }
+                    let line = String::from_utf8_lossy(&raw);
                     if line.trim().is_empty() {
                         continue;
                     }
@@ -215,8 +235,13 @@ impl McpClient {
             std::thread::Builder::new()
                 .name(format!("mcp-{}-err", sanitize(&server_name)))
                 .spawn(move || {
-                    let reader = BufReader::new(stderr);
-                    for line in reader.lines().map_while(std::result::Result::ok) {
+                    let mut reader = BufReader::new(stderr);
+                    let mut raw = Vec::new();
+                    while matches!(reader.read_until(b'\n', &mut raw), Ok(n) if n > 0) {
+                        let line = String::from_utf8_lossy(&raw)
+                            .trim_end_matches(['\r', '\n'])
+                            .to_string();
+                        raw.clear();
                         let mut t = emerag_util::sync::lock(&tail_clone);
                         if t.len() >= 40 {
                             t.remove(0);

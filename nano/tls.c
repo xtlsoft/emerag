@@ -304,14 +304,14 @@ Tls *tls_connect(const char *host, const char *connect_ip, int port, char *err, 
     }
 #ifdef _WIN32
     {
-        DWORD tv = 30000;
+        DWORD tv = 300000; /* slow non-streaming completions */
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
         setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof(tv));
     }
 #else
     {
         struct timeval tv;
-        tv.tv_sec = 30; tv.tv_usec = 0;
+        tv.tv_sec = 300; tv.tv_usec = 0; /* slow non-streaming completions */
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }

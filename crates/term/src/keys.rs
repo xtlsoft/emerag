@@ -173,6 +173,10 @@ fn decode_one(s: &[u8]) -> Decoded {
     let b = s[0];
     match b {
         0x1b => decode_escape(s),
+        // Terminals in "newline mode" (PuTTY implicit LF, minicom, some
+        // serial setups) send CR LF for one Enter. Treat the pair as one key
+        // so the LF does not answer the next prompt with its default.
+        0x0d if s.get(1) == Some(&0x0a) => Decoded::Key(Key::new(KeyCode::Enter), 2),
         0x0d | 0x0a => Decoded::Key(Key::new(KeyCode::Enter), 1),
         0x09 => Decoded::Key(Key::new(KeyCode::Tab), 1),
         0x7f | 0x08 => Decoded::Key(Key::new(KeyCode::Backspace), 1),
@@ -339,9 +343,26 @@ fn decode_alt(s: &[u8]) -> Decoded {
 }
 
 fn decode_csi(s: &[u8]) -> Decoded {
+    // Linux console: F1-F5 are ESC [ [ A .. ESC [ [ E.
+    if s.get(2) == Some(&b'[') {
+        let Some(&b) = s.get(3) else {
+            return Decoded::Incomplete;
+        };
+        let key = match b {
+            b'A'..=b'E' => Key::new(KeyCode::F(b - b'A' + 1)),
+            _ => Key::new(KeyCode::Unknown),
+        };
+        return Decoded::Key(key, 4);
+    }
     let mut j = 2usize;
     while j < s.len() {
         let b = s[j];
+        // rxvt ends Shift+key sequences with '$' (ESC [ 3 $), which is an
+        // intermediate byte in ECMA-48. Without this the decoder would wait
+        // for a "final" byte and swallow the next characters typed.
+        if b == b'$' && j > 2 && s[2..j].iter().all(|c| c.is_ascii_digit() || *c == b';') {
+            return Decoded::Key(csi_key(&s[2..j], b), j + 1);
+        }
         if (0x40..=0x7e).contains(&b) {
             return Decoded::Key(csi_key(&s[2..j], b), j + 1);
         }
@@ -356,10 +377,17 @@ fn decode_csi(s: &[u8]) -> Decoded {
 }
 
 fn decode_ss3(s: &[u8]) -> Decoded {
-    if s.len() < 3 {
+    // Some terminals put a modifier between SS3 and the final byte
+    // (ESC O 5 A for Ctrl+Up, ESC O 2 P for Shift+F1).
+    let mut j = 2usize;
+    while j < s.len() && (s[j].is_ascii_digit() || s[j] == b';') && j < 8 {
+        j += 1;
+    }
+    if j >= s.len() {
         return Decoded::Incomplete;
     }
-    let key = match s[2] {
+    let modifier = parse_params(&s[2..j]).0[0];
+    let key = match s[j] {
         b'A' => Key::new(KeyCode::Up),
         b'B' => Key::new(KeyCode::Down),
         b'C' => Key::new(KeyCode::Right),
@@ -370,9 +398,24 @@ fn decode_ss3(s: &[u8]) -> Decoded {
         b'Q' => Key::new(KeyCode::F(2)),
         b'R' => Key::new(KeyCode::F(3)),
         b'S' => Key::new(KeyCode::F(4)),
+        // rxvt: Ctrl+arrows.
+        b'a' => Key::new(KeyCode::Up).with_ctrl(),
+        b'b' => Key::new(KeyCode::Down).with_ctrl(),
+        b'c' => Key::new(KeyCode::Right).with_ctrl(),
+        b'd' => Key::new(KeyCode::Left).with_ctrl(),
+        // Application keypad mode (VT100/VT220 and many serial terminals).
+        b'M' => Key::new(KeyCode::Enter),
+        b'X' => Key::char('='),
+        b'j' => Key::char('*'),
+        b'k' => Key::char('+'),
+        b'l' => Key::char(','),
+        b'm' => Key::char('-'),
+        b'n' => Key::char('.'),
+        b'o' => Key::char('/'),
+        b @ b'p'..=b'y' => Key::char((b'0' + (b - b'p')) as char),
         _ => Key::new(KeyCode::Unknown),
     };
-    Decoded::Key(key, 3)
+    Decoded::Key(apply_mods(key, modifier), j + 1)
 }
 
 fn parse_params(s: &[u8]) -> ([u32; 8], usize) {
@@ -413,9 +456,33 @@ fn parse_params(s: &[u8]) -> ([u32; 8], usize) {
 fn apply_mods(mut key: Key, modifier: u32) -> Key {
     if modifier > 1 {
         let bits = modifier - 1;
-        key.shift = bits & 1 != 0;
-        key.alt = bits & 2 != 0;
-        key.ctrl = bits & 4 != 0;
+        key.shift |= bits & 1 != 0;
+        key.alt |= bits & 2 != 0;
+        key.ctrl |= bits & 4 != 0;
+    }
+    key
+}
+
+/// Key for a code point reported by CSI u (kitty, foot, WezTerm) or by
+/// xterm's modifyOtherKeys form CSI 27 ; mod ; code ~.
+fn codepoint_key(cp: u32, modifier: u32) -> Key {
+    let key = match cp {
+        13 => Key::new(KeyCode::Enter),
+        9 => Key::new(KeyCode::Tab),
+        27 => Key::new(KeyCode::Esc),
+        8 | 127 => Key::new(KeyCode::Backspace),
+        _ => match char::from_u32(cp) {
+            Some(c) if !c.is_control() => Key::char(c),
+            _ => Key::new(KeyCode::Unknown),
+        },
+    };
+    let key = apply_mods(key, modifier);
+    // Shift is already folded into the character itself.
+    if matches!(key.code, KeyCode::Char(_)) && !key.ctrl && !key.alt {
+        return Key {
+            shift: false,
+            ..key
+        };
     }
     key
 }
@@ -442,7 +509,16 @@ fn csi_key(params: &[u8], final_byte: u8) -> Key {
         b'Q' => KeyCode::F(2),
         b'R' => KeyCode::F(3),
         b'S' => KeyCode::F(4),
-        b'~' => {
+        // rxvt: Shift+arrows.
+        b'a' => return Key::new(KeyCode::Up).with_shift(),
+        b'b' => return Key::new(KeyCode::Down).with_shift(),
+        b'c' => return Key::new(KeyCode::Right).with_shift(),
+        b'd' => return Key::new(KeyCode::Left).with_shift(),
+        b'u' if n >= 1 && p[0] > 0 => return codepoint_key(p[0], modifier),
+        b'~' if p[0] == 27 && n >= 3 => return codepoint_key(p[2], p[1]),
+        // '~' is the VT220 form; rxvt uses '$' for Shift, '^' for Ctrl and
+        // '@' for Ctrl+Shift on the same numbered keys.
+        b'~' | b'$' | b'^' | b'@' => {
             let base = match p[0] {
                 1 | 7 => KeyCode::Home,
                 2 => KeyCode::Insert,
@@ -466,7 +542,13 @@ fn csi_key(params: &[u8], final_byte: u8) -> Key {
                 201 => return Key::new(KeyCode::PasteEnd),
                 _ => KeyCode::Unknown,
             };
-            return apply_mods(Key::new(base), modifier);
+            let key = apply_mods(Key::new(base), modifier);
+            return match final_byte {
+                b'$' => key.with_shift(),
+                b'^' => key.with_ctrl(),
+                b'@' => key.with_ctrl().with_shift(),
+                _ => key,
+            };
         }
         _ => KeyCode::Unknown,
     };
@@ -480,6 +562,7 @@ fn csi_key(params: &[u8], final_byte: u8) -> Key {
 thread_local! {
     static PENDING: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static QUEUE: RefCell<VecDeque<Key>> = const { RefCell::new(VecDeque::new()) };
+    static LAST_CR: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
 }
 
 /// Read one key, blocking until input is available.
@@ -678,6 +761,11 @@ fn read_key_bytes() -> Result<Key> {
                 break;
             }
         }
+        // CR LF split across two reads is still one Enter.
+        if LAST_CR.with(|c| c.get()) && buf.first() == Some(&b'\n') {
+            buf.remove(0);
+        }
+        LAST_CR.with(|c| c.set(buf.last() == Some(&b'\r')));
         let keys = PENDING.with(|p| {
             let mut p = p.borrow_mut();
             decode_keys(&buf, &mut p)
@@ -711,7 +799,10 @@ mod win {
             len: u32,
             read: *mut u32,
         ) -> i32;
+        fn WaitForSingleObject(handle: Handle, millis: u32) -> u32;
     }
+
+    const WAIT_OBJECT_0: u32 = 0;
 
     const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6;
     const KEY_EVENT: u16 = 0x0001;
@@ -838,16 +929,14 @@ mod win {
         Some(key)
     }
 
-    pub fn read_key() -> Result<Key> {
-        let queued = WIN_QUEUE.with(|q| q.borrow_mut().pop_front());
-        if let Some(key) = queued {
-            return Ok(key);
-        }
-        let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-        if handle.is_null() || handle as isize == -1 {
-            return Err(Error::not_a_tty());
-        }
+    /// Next key-down record, or None when `wait_ms` passes first.
+    fn next_key_event(handle: Handle, wait_ms: Option<u32>) -> Result<Option<KeyEventRecord>> {
         loop {
+            if let Some(ms) = wait_ms {
+                if unsafe { WaitForSingleObject(handle, ms) } != WAIT_OBJECT_0 {
+                    return Ok(None);
+                }
+            }
             let mut record = unsafe { core::mem::zeroed::<InputRecord>() };
             let mut read = 0u32;
             let ok = unsafe { ReadConsoleInputW(handle, &mut record, 1, &mut read) };
@@ -859,6 +948,66 @@ mod win {
             }
             let event = unsafe { record.event.key };
             if event.key_down == 0 {
+                continue;
+            }
+            return Ok(Some(event));
+        }
+    }
+
+    /// A console in VT input mode (set by another program sharing it, or a
+    /// host that forces it) reports an arrow as ESC '[' 'A' records with no
+    /// virtual-key code. Collect the rest of the sequence and run it through
+    /// the byte decoder instead of returning Esc and literal text.
+    fn decode_vt_records(handle: Handle) -> Result<Vec<Key>> {
+        let mut bytes = vec![0x1bu8];
+        let mut pending = Vec::new();
+        let mut keys = Vec::new();
+        loop {
+            let Some(event) = next_key_event(handle, Some(50))? else {
+                break;
+            };
+            let Some(c) = char::from_u32(event.unicode_char as u32) else {
+                break;
+            };
+            let mut utf8 = [0u8; 4];
+            bytes.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
+            keys.extend(decode_keys(&bytes, &mut pending));
+            bytes.clear();
+            if pending.is_empty() || keys.len() > 1 {
+                break;
+            }
+        }
+        if !bytes.is_empty() {
+            // Nothing followed: a real Esc key (the decoder reports a lone
+            // ESC as Esc).
+            keys.extend(decode_keys(&bytes, &mut pending));
+        }
+        if !pending.is_empty() {
+            // A sequence that never finished.
+            keys.push(Key::new(KeyCode::Unknown));
+        }
+        Ok(keys)
+    }
+
+    pub fn read_key() -> Result<Key> {
+        let queued = WIN_QUEUE.with(|q| q.borrow_mut().pop_front());
+        if let Some(key) = queued {
+            return Ok(key);
+        }
+        let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+        if handle.is_null() || handle as isize == -1 {
+            return Err(Error::not_a_tty());
+        }
+        loop {
+            let Some(event) = next_key_event(handle, None)? else {
+                continue;
+            };
+            if event.unicode_char == 0x1b && event.virtual_key != 0x1b {
+                let mut keys = decode_vt_records(handle)?.into_iter();
+                if let Some(first) = keys.next() {
+                    WIN_QUEUE.with(|q| q.borrow_mut().extend(keys));
+                    return Ok(first);
+                }
                 continue;
             }
             if let Some(key) = map_event(event) {
@@ -1169,6 +1318,69 @@ mod tests {
         assert_eq!(keys.first(), Some(&k(KeyCode::Esc)));
         assert!(keys.iter().any(|key| key.is_ctrl('c')));
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn crlf_is_one_enter() {
+        assert_eq!(decode_all(b"\r\n"), vec![k(KeyCode::Enter)]);
+        assert_eq!(
+            decode_all(b"1\r\n"),
+            vec![k(KeyCode::Char('1')), k(KeyCode::Enter)]
+        );
+        assert_eq!(
+            decode_all(b"\r\r"),
+            vec![k(KeyCode::Enter), k(KeyCode::Enter)]
+        );
+        assert_eq!(
+            decode_all(b"\n\n"),
+            vec![k(KeyCode::Enter), k(KeyCode::Enter)]
+        );
+    }
+
+    #[test]
+    fn linux_console_function_keys() {
+        assert_eq!(one(b"\x1b[[A"), k(KeyCode::F(1)));
+        assert_eq!(one(b"\x1b[[E"), k(KeyCode::F(5)));
+        let mut pending = Vec::new();
+        assert!(decode_keys(b"\x1b[[", &mut pending).is_empty());
+        assert_eq!(decode_keys(b"B", &mut pending), vec![k(KeyCode::F(2))]);
+    }
+
+    #[test]
+    fn rxvt_sequences() {
+        assert_eq!(one(b"\x1b[3$"), k(KeyCode::Delete).with_shift());
+        assert_eq!(one(b"\x1b[3^"), k(KeyCode::Delete).with_ctrl());
+        assert_eq!(one(b"\x1b[5@"), k(KeyCode::PageUp).with_ctrl().with_shift());
+        assert_eq!(one(b"\x1b[a"), k(KeyCode::Up).with_shift());
+        assert_eq!(one(b"\x1bOd"), k(KeyCode::Left).with_ctrl());
+        // The '$' form must not swallow what is typed next.
+        assert_eq!(
+            decode_all(b"\x1b[2$ab"),
+            vec![
+                k(KeyCode::Insert).with_shift(),
+                k(KeyCode::Char('a')),
+                k(KeyCode::Char('b'))
+            ]
+        );
+    }
+
+    #[test]
+    fn ss3_modifiers_and_keypad() {
+        assert_eq!(one(b"\x1bO5A"), k(KeyCode::Up).with_ctrl());
+        assert_eq!(one(b"\x1bO2P"), k(KeyCode::F(1)).with_shift());
+        assert_eq!(one(b"\x1bOM"), k(KeyCode::Enter));
+        assert_eq!(one(b"\x1bOp"), k(KeyCode::Char('0')));
+        assert_eq!(one(b"\x1bOy"), k(KeyCode::Char('9')));
+        assert_eq!(one(b"\x1bOk"), k(KeyCode::Char('+')));
+    }
+
+    #[test]
+    fn csi_u_and_modify_other_keys() {
+        assert_eq!(one(b"\x1b[13u"), k(KeyCode::Enter));
+        assert!(one(b"\x1b[99;5u").is_ctrl('c'));
+        assert_eq!(one(b"\x1b[65;2u"), k(KeyCode::Char('A')));
+        assert_eq!(one(b"\x1b[27;5;13~"), k(KeyCode::Enter).with_ctrl());
+        assert_eq!(one(b"\x1b[127u"), k(KeyCode::Backspace));
     }
 
     #[test]

@@ -354,58 +354,62 @@ impl RecordLayer {
         self.tcp.flush()
     }
 
+    /// Change the socket read timeout. Safe at any point: a timeout leaves
+    /// partial record bytes buffered (see [RecordLayer::read_record]).
+    pub(crate) fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> io::Result<()> {
+        self.tcp.set_read_timeout(timeout)
+    }
+
     /// Read one complete record, decrypting it when a read cipher is active.
     ///
     /// A socket timeout is returned as-is with any partial record bytes kept in
     /// the internal buffer; the next call resumes exactly where this one left
     /// off.
     pub(crate) fn read_record(&mut self) -> io::Result<(u8, Vec<u8>)> {
-        loop {
-            let (typ, version, payload) = self.read_raw()?;
+        let (typ, version, payload) = self.read_raw()?;
 
-            // ChangeCipherSpec is always sent in the clear, even in TLS 1.3
-            // compatibility mode.
-            if typ == ContentType::ChangeCipherSpec as u8 {
-                if payload.len() != 1 || payload[0] != 1 {
-                    return Err(invalid(
-                        "change_cipher_spec payload is not the single byte 0x01",
-                    ));
+        // ChangeCipherSpec is always sent in the clear, even in TLS 1.3
+        // compatibility mode.
+        if typ == ContentType::ChangeCipherSpec as u8 {
+            if payload.len() != 1 || payload[0] != 1 {
+                return Err(invalid(
+                    "change_cipher_spec payload is not the single byte 0x01",
+                ));
+            }
+            return Ok((typ, payload));
+        }
+
+        match &self.read_cipher {
+            None => {
+                if payload.len() > MAX_PLAINTEXT {
+                    return Err(invalid(format!(
+                        "plaintext record is {} bytes, limit {MAX_PLAINTEXT}",
+                        payload.len()
+                    )));
                 }
                 return Ok((typ, payload));
             }
-
-            match &self.read_cipher {
-                None => {
-                    if payload.len() > MAX_PLAINTEXT {
-                        return Err(invalid(format!(
-                            "plaintext record is {} bytes, limit {MAX_PLAINTEXT}",
-                            payload.len()
-                        )));
-                    }
+            Some(cipher) => {
+                // Some peers emit a plaintext two-byte alert on a fatal
+                // error even after keys are installed. It cannot be an
+                // encrypted alert (those carry a 16-byte tag).
+                if typ == ContentType::Alert as u8 && payload.len() == 2 {
                     return Ok((typ, payload));
                 }
-                Some(cipher) => {
-                    // Some peers emit a plaintext two-byte alert on a fatal
-                    // error even after keys are installed. It cannot be an
-                    // encrypted alert (those carry a 16-byte tag).
-                    if typ == ContentType::Alert as u8 && payload.len() == 2 {
-                        return Ok((typ, payload));
-                    }
-                    if typ == ContentType::Handshake as u8
-                        || typ == ContentType::ApplicationData as u8
-                        || typ == ContentType::Alert as u8
-                    {
-                        let seq = self.read_seq;
-                        let (inner_type, plain) = cipher.decrypt(seq, typ, version, &payload)?;
-                        self.read_seq = seq.checked_add(1).ok_or_else(|| {
-                            invalid("read sequence number exhausted; a new key epoch is required")
-                        })?;
-                        return Ok((inner_type, plain));
-                    }
-                    return Err(invalid(format!(
-                        "record has content type {typ} while record protection is active"
-                    )));
+                if typ == ContentType::Handshake as u8
+                    || typ == ContentType::ApplicationData as u8
+                    || typ == ContentType::Alert as u8
+                {
+                    let seq = self.read_seq;
+                    let (inner_type, plain) = cipher.decrypt(seq, typ, version, &payload)?;
+                    self.read_seq = seq.checked_add(1).ok_or_else(|| {
+                        invalid("read sequence number exhausted; a new key epoch is required")
+                    })?;
+                    return Ok((inner_type, plain));
                 }
+                return Err(invalid(format!(
+                    "record has content type {typ} while record protection is active"
+                )));
             }
         }
     }
@@ -612,7 +616,6 @@ mod tests {
         let tcp = TcpStream::connect(("127.0.0.1", port)).expect("connect");
         tcp.set_read_timeout(Some(Duration::from_millis(150)))
             .expect("timeout");
-        let control = tcp.try_clone().expect("clone");
         let mut layer = RecordLayer::new(tcp);
 
         let err = layer.read_record().expect_err("timeout expected");
@@ -624,7 +627,9 @@ mod tests {
 
         // The bytes already consumed must still be in the buffer, and the next
         // call (after the caller extends the timeout) must complete the record.
-        control
+        // Set it on the layer's own socket: on Windows a try_clone() handle
+        // has its own SO_RCVTIMEO, so changing a clone does not reach it.
+        layer
             .set_read_timeout(Some(Duration::from_secs(3)))
             .expect("timeout");
         let (typ, payload) = layer.read_record().expect("resumed record");

@@ -304,8 +304,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
     } else if !prompt_words.is_empty() {
         cli.action = Action::Prompt(prompt_words.join(" "));
     }
-    if cli.read_stdin && matches!(cli.action, Action::Prompt(_)) {
-        return Err("use either --stdin or a prompt, not both".into());
+    if cli.read_stdin {
+        match cli.action {
+            Action::Prompt(_) => return Err("use either --stdin or a prompt, not both".into()),
+            // The prompt text is read from stdin by main; without this the
+            // documented `emerag --stdin` / `emerag -` fell into the REPL.
+            Action::Interactive => cli.action = Action::Prompt(String::new()),
+            _ => {}
+        }
     }
     if cli.yes && cli.mode.is_none() {
         cli.mode = Some("auto".into());
@@ -361,6 +367,16 @@ mod tests {
         assert!(p(&["--nope"]).is_err());
         assert!(p(&["--provider"]).is_err());
         assert!(p(&["-p", "x", "extra"]).is_err());
+    }
+
+    #[test]
+    fn stdin_flag_is_a_one_shot_prompt() {
+        assert_eq!(
+            p(&["--stdin"]).unwrap().action,
+            Action::Prompt(String::new())
+        );
+        assert_eq!(p(&["-"]).unwrap().action, Action::Prompt(String::new()));
+        assert!(p(&["--stdin", "-p", "x"]).is_err());
     }
 
     #[test]

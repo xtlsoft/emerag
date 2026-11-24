@@ -126,7 +126,7 @@ fn parse_skill_file(path: &Path, fallback_name: Option<String>) -> Option<Skill>
     for line in meta.lines() {
         if let Some((k, v)) = line.split_once(':') {
             let key = k.trim().to_ascii_lowercase();
-            let value = v.trim().trim_matches(['"', '\'']).to_string();
+            let value = v.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
             match key.as_str() {
                 "name" => name = sanitize_name(&value),
                 "description" => description = value,

@@ -35,34 +35,18 @@ pub fn api_kind(cfg: &Config) -> ApiKind {
     ApiKind::ChatCompletions
 }
 
-pub fn client_config(cfg: &Config, _cli: &Cli) -> Result<ClientConfig, String> {
-    let profile = emerag_llm::catalog::find(&profile_id(cfg));
-    let base_url = if !cfg.base_url.trim().is_empty() {
-        cfg.base_url.clone()
-    } else if let Some(p) = profile {
-        p.base_url.to_string()
-    } else {
-        cfg.custom_profiles
-            .iter()
-            .find(|v| v.get("id").and_then(|x| x.as_str()) == Some(cfg.provider.as_str()))
-            .and_then(|v| v.get("base_url").and_then(|x| x.as_str()))
-            .unwrap_or("")
-            .to_string()
-    };
-    if base_url.trim().is_empty() {
-        return Err("no endpoint configured: run --wizard or pass --base-url".into());
-    }
-    let url = emerag_http::Url::parse(&base_url).map_err(|e| format!("bad endpoint: {e}"))?;
-    let api = api_kind(cfg);
+/// Network settings shared by inference and DeepSeek sign-in: --dns,
+/// --resolve, TLS verification (--insecure, --cacert, lite) and proxy.
+/// --ip is endpoint-specific and applied by [client_config].
+pub struct NetworkOptions {
+    pub resolve: ResolveTable,
+    pub tls: TlsOptions,
+    pub proxy: Option<ProxyConfig>,
+    pub dns_servers: Vec<std::net::IpAddr>,
+    pub dns_first: bool,
+}
 
-    let mut headers = Vec::new();
-    if let Some(p) = profile {
-        for (k, v) in p.headers {
-            headers.push((k.to_string(), v.to_string()));
-        }
-    }
-    headers.extend(cfg_headers(cfg));
-
+pub fn network_options(cfg: &Config) -> Result<NetworkOptions, String> {
     let mut dns_servers: Vec<std::net::IpAddr> = Vec::new();
     for spec in &cfg.network.dns {
         let ip: std::net::IpAddr = spec
@@ -86,16 +70,6 @@ pub fn client_config(cfg: &Config, _cli: &Cli) -> Result<ClientConfig, String> {
             .parse_entry(spec)
             .map_err(|e| format!("bad --resolve '{spec}': {e}"))?;
     }
-    if let Some(ip) = &cfg.network.ip {
-        let ip: std::net::IpAddr = ip
-            .trim()
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .parse()
-            .map_err(|_| format!("bad --ip '{ip}'"))?;
-        resolve.add(&url.host, Some(url.port), ip);
-    }
-
     let tls = TlsOptions {
         verify: if cfg.network.insecure {
             TlsVerify::Insecure
@@ -143,6 +117,72 @@ pub fn client_config(cfg: &Config, _cli: &Cli) -> Result<ClientConfig, String> {
             }
         }
     };
+    Ok(NetworkOptions {
+        resolve,
+        tls,
+        proxy,
+        dns_servers,
+        dns_first,
+    })
+}
+
+/// Point DeepSeek sign-in at the same network settings as inference.
+pub fn configure_auth_network(cfg: &Config) -> Result<(), String> {
+    let net = network_options(cfg)?;
+    emerag_llm::deepseek_auth::set_network(emerag_llm::deepseek_auth::AuthNetwork {
+        resolve: net.resolve,
+        tls: Some(net.tls),
+        proxy: net.proxy,
+        dns_servers: net.dns_servers,
+        dns_first: net.dns_first,
+    });
+    Ok(())
+}
+
+pub fn client_config(cfg: &Config, _cli: &Cli) -> Result<ClientConfig, String> {
+    let profile = emerag_llm::catalog::find(&profile_id(cfg));
+    let base_url = if !cfg.base_url.trim().is_empty() {
+        cfg.base_url.clone()
+    } else if let Some(p) = profile {
+        p.base_url.to_string()
+    } else {
+        cfg.custom_profiles
+            .iter()
+            .find(|v| v.get("id").and_then(|x| x.as_str()) == Some(cfg.provider.as_str()))
+            .and_then(|v| v.get("base_url").and_then(|x| x.as_str()))
+            .unwrap_or("")
+            .to_string()
+    };
+    if base_url.trim().is_empty() {
+        return Err("no endpoint configured: run --wizard or pass --base-url".into());
+    }
+    let url = emerag_http::Url::parse(&base_url).map_err(|e| format!("bad endpoint: {e}"))?;
+    let api = api_kind(cfg);
+
+    let mut headers = Vec::new();
+    if let Some(p) = profile {
+        for (k, v) in p.headers {
+            headers.push((k.to_string(), v.to_string()));
+        }
+    }
+    headers.extend(cfg_headers(cfg));
+
+    let NetworkOptions {
+        mut resolve,
+        tls,
+        proxy,
+        dns_servers,
+        dns_first,
+    } = network_options(cfg)?;
+    if let Some(ip) = &cfg.network.ip {
+        let ip: std::net::IpAddr = ip
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .map_err(|_| format!("bad --ip '{ip}'"))?;
+        resolve.add(&url.host, Some(url.port), ip);
+    }
 
     let mut cc = match profile {
         Some(p) => ClientConfig::new(p, cfg.model.clone()),
@@ -400,6 +440,25 @@ pub fn build(cfg: &Config, cli: &Cli) -> Result<Box<dyn Provider>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_options_carry_resolve_dns_and_tls() {
+        let mut cfg = Config::default();
+        cfg.network
+            .resolve
+            .push("platform.deepseek.com:443:192.0.2.7".into());
+        cfg.network.dns.push("192.0.2.53".into());
+        cfg.network.insecure = true;
+        let net = network_options(&cfg).unwrap();
+        assert_eq!(
+            net.resolve.lookup("platform.deepseek.com", 443),
+            Some("192.0.2.7".parse().unwrap())
+        );
+        assert!(net.dns_first);
+        assert!(matches!(net.tls.verify, TlsVerify::Insecure));
+        cfg.network.dns = vec!["not-an-ip".into()];
+        assert!(network_options(&cfg).is_err());
+    }
 
     #[test]
     fn rejects_empty_endpoint() {

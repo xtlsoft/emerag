@@ -90,6 +90,15 @@ impl ProxyConfig {
 }
 
 pub fn parse_proxy(spec: &str) -> Result<ProxyTarget> {
+    // curl and most tools accept "proxy.corp:3128" without a scheme.
+    let spec = spec.trim();
+    let owned;
+    let spec = if spec.contains("://") {
+        spec
+    } else {
+        owned = format!("http://{spec}");
+        owned.as_str()
+    };
     let url = Url::parse(spec).map_err(|e| e.context("invalid proxy URL"))?;
     if url.scheme != "http" {
         return Err(Error::new(format!(
@@ -97,9 +106,14 @@ pub fn parse_proxy(spec: &str) -> Result<ProxyTarget> {
             url.scheme
         )));
     }
+    // Userinfo is percent-encoded in URLs (p%40ss for p@ss); the proxy
+    // expects the decoded credentials.
     let auth = url.user.as_ref().map(|user| {
         let pass = url.pass.clone().unwrap_or_default();
-        base64::encode(format!("{user}:{pass}").as_bytes())
+        let mut raw = percent_decode(user);
+        raw.push(b':');
+        raw.extend(percent_decode(&pass));
+        base64::encode(&raw)
     });
     Ok(ProxyTarget {
         scheme: url.scheme,
@@ -107,6 +121,25 @@ pub fn parse_proxy(spec: &str) -> Result<ProxyTarget> {
         port: url.port,
         auth,
     })
+}
+
+fn percent_decode(s: &str) -> Vec<u8> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = |c: u8| (c as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    out
 }
 
 fn bypasses(no_proxy: &[String], host: &str, port: u16) -> bool {
@@ -163,6 +196,17 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn proxy_without_scheme_and_encoded_password() {
+        let t = parse_proxy("proxy.corp:3128").unwrap();
+        assert_eq!((t.host.as_str(), t.port), ("proxy.corp", 3128));
+        let t = parse_proxy("http://user:p%40ss@proxy:3128").unwrap();
+        assert_eq!(
+            t.auth.as_deref(),
+            Some(base64::encode(b"user:p@ss").as_str())
+        );
     }
 
     #[test]

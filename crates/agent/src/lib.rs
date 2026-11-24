@@ -608,8 +608,12 @@ impl Agent {
         }
         // Summarize everything except the last few messages.
         let keep = 6usize;
-        if self.session.messages.len() > keep {
-            let split = self.session.messages.len() - keep;
+        let split = if self.session.messages.len() > keep {
+            session::clean_cut(&self.session.messages, self.session.messages.len() - keep)
+        } else {
+            0
+        };
+        if split > 0 && split < self.session.messages.len() {
             let older = &self.session.messages[..split];
             let mut transcript = String::new();
             for m in older {

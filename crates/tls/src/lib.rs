@@ -209,6 +209,14 @@ impl TlsStream {
         self.peer_spki
     }
 
+    /// Set the read timeout of the underlying socket (None blocks forever).
+    /// A read that times out returns `WouldBlock`/`TimedOut` and loses
+    /// nothing: partially received records stay buffered and the next read
+    /// continues them.
+    pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> io::Result<()> {
+        self.io.set_read_timeout(timeout)
+    }
+
     fn handle_alert(&mut self, payload: &[u8]) -> io::Result<usize> {
         if payload.len() != 2 {
             return Err(io::Error::new(

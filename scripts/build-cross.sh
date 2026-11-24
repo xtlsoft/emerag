@@ -36,7 +36,11 @@ for t in $TARGETS; do
       echo "skip $t (no loongarch64-linux-gnu-gcc linker)"; continue; } ;;
   esac
   echo "==> $t"
-  if cargo build --manifest-path "$ROOT/Cargo.toml" --profile "$PROFILE" --target "$t" 2>&1 | tail -3; then
+  LOG="$DIST/.build-$t.log"
+  # Test cargo's own status: piping into tail would report tail's, and a
+  # failed build would then ship a stale binary from target/.
+  if cargo build --manifest-path "$ROOT/Cargo.toml" --profile "$PROFILE" --target "$t" >"$LOG" 2>&1; then
+    tail -3 "$LOG"
     BIN="$ROOT/target/$t/$PROFILE/emerag"
     [ -f "$BIN" ] || BIN="$BIN.exe"
     if [ -f "$BIN" ]; then
@@ -44,6 +48,7 @@ for t in $TARGETS; do
       echo "    $(wc -c < "$BIN") bytes"
     fi
   else
+    tail -20 "$LOG"
     echo "    FAILED $t (continuing)"
   fi
 done

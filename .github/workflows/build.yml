@@ -20,6 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - name: Test Rust workspace
         run: cargo test --workspace -- --test-threads=1
       - name: Build the debug binary used by e2e
@@ -28,6 +30,104 @@ jobs:
         run: ./tests/e2e.sh
       - name: Test C crypto vectors
         run: make -C nano test_crypto
+      - name: Clippy (deny-level lints only)
+        run: cargo clippy --workspace --all-targets
+      - name: Formatting
+        run: cargo fmt --all --check
+
+  # The unit and integration tests on the other two host families. Raw-mode,
+  # console, process-tree and path code differ per OS and used to be checked
+  # only by compiling.
+  test-hosts:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test Rust workspace
+        run: cargo test --workspace -- --test-threads=1
+
+  # Run the whole test suite on foreign architectures under qemu-user:
+  # 32-bit (i686, armv7), big-endian (s390x) and RISC-V catch word-size and
+  # byte-order bugs in the hand-written crypto, TLS, JSON and FFI code.
+  test-qemu:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-unknown-linux-musl, qemu: qemu-aarch64, packages: "gcc-aarch64-linux-gnu", prefix: "" }
+          - { target: armv7-unknown-linux-musleabihf, qemu: qemu-arm, packages: "gcc-arm-linux-gnueabihf", prefix: "" }
+          - { target: i686-unknown-linux-musl, qemu: qemu-i386, packages: "gcc-i686-linux-gnu", prefix: "" }
+          - { target: riscv64gc-unknown-linux-musl, qemu: qemu-riscv64, packages: "gcc-riscv64-linux-gnu", prefix: "" }
+          - { target: s390x-unknown-linux-gnu, qemu: qemu-s390x, packages: "gcc-s390x-linux-gnu", prefix: "/usr/s390x-linux-gnu" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cross linker and qemu-user
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }} qemu-user
+      - name: Test Rust workspace under qemu
+        shell: bash
+        run: |
+          runner_var="CARGO_TARGET_$(printf '%s' "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')_RUNNER"
+          export "$runner_var=${{ matrix.qemu }}"
+          if [ -n "${{ matrix.prefix }}" ]; then export QEMU_LD_PREFIX="${{ matrix.prefix }}"; fi
+          # Doctests are left to the host jobs: rustdoc links them without
+          # the target's crt-static flags, which fails on musl cross targets.
+          cargo test --workspace --target ${{ matrix.target }} --lib --bins --tests -- --test-threads=1
+
+  # Targets without a release artifact still have to compile: BSD and
+  # illumos raw mode and winsize, Android, ppc64le termios, LoongArch, and
+  # Windows on ARM. No linker is needed for cargo check.
+  check-targets:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-freebsd
+          - x86_64-unknown-netbsd
+          - x86_64-unknown-illumos
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+          - powerpc64le-unknown-linux-gnu
+          - loongarch64-unknown-linux-musl
+          - aarch64-pc-windows-gnullvm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Check workspace
+        run: cargo check --workspace --all-targets --target ${{ matrix.target }}
+
+  # rust-version in Cargo.toml, and Rust 1.77.2, the last release that
+  # supports Windows 7 (scripts/build-legacy-win.sh). Cargo.lock must stay at
+  # version 3 for these to parse it.
+  msrv:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { toolchain: "1.74.1", target: x86_64-unknown-linux-gnu }
+          - { toolchain: "1.77.2", target: x86_64-pc-windows-gnu }
+          - { toolchain: "1.77.2", target: i686-pc-windows-gnu }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: ${{ matrix.target }}
+      - name: Check workspace
+        run: cargo check --workspace --all-targets --target ${{ matrix.target }}
 
   full-linux:
     runs-on: ubuntu-latest
@@ -35,12 +135,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-musl, page: linux-x86_64, packages: "musl-tools" }
-          - { target: i686-unknown-linux-musl, page: linux-i686, packages: "gcc-i686-linux-gnu" }
-          - { target: aarch64-unknown-linux-musl, page: linux-aarch64, packages: "gcc-aarch64-linux-gnu" }
-          - { target: armv7-unknown-linux-musleabihf, page: linux-armv7, packages: "gcc-arm-linux-gnueabihf" }
-          - { target: riscv64gc-unknown-linux-musl, page: linux-riscv64, packages: "gcc-riscv64-linux-gnu" }
-          - { target: s390x-unknown-linux-gnu, page: linux-s390x, packages: "gcc-s390x-linux-gnu" }
+          - { target: x86_64-unknown-linux-musl, page: linux-x86_64, packages: "musl-tools", qemu: "", prefix: "" }
+          - { target: i686-unknown-linux-musl, page: linux-i686, packages: "gcc-i686-linux-gnu", qemu: qemu-i386, prefix: "" }
+          - { target: aarch64-unknown-linux-musl, page: linux-aarch64, packages: "gcc-aarch64-linux-gnu", qemu: qemu-aarch64, prefix: "" }
+          - { target: armv7-unknown-linux-musleabihf, page: linux-armv7, packages: "gcc-arm-linux-gnueabihf", qemu: qemu-arm, prefix: "" }
+          - { target: riscv64gc-unknown-linux-musl, page: linux-riscv64, packages: "gcc-riscv64-linux-gnu", qemu: qemu-riscv64, prefix: "" }
+          - { target: s390x-unknown-linux-gnu, page: linux-s390x, packages: "gcc-s390x-linux-gnu", qemu: qemu-s390x, prefix: "/usr/s390x-linux-gnu" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -49,9 +149,22 @@ jobs:
       - name: Install cross linker
         run: |
           sudo apt-get update
-          sudo apt-get install -y ${{ matrix.packages }}
+          sudo apt-get install -y ${{ matrix.packages }} qemu-user
       - name: Build full
         run: cargo build --release --target ${{ matrix.target }}
+      - name: Smoke-run the release binary
+        shell: bash
+        run: |
+          # The release profile (opt-level z, LTO, panic=abort) is not what
+          # the tests run, so execute the shipped binary itself.
+          bin="target/${{ matrix.target }}/release/emerag"
+          if [ -n "${{ matrix.prefix }}" ]; then export QEMU_LD_PREFIX="${{ matrix.prefix }}"; fi
+          run() { if [ -n "${{ matrix.qemu }}" ]; then ${{ matrix.qemu }} "$bin" "$@"; else "$bin" "$@"; fi; }
+          run --version
+          run --keys > /dev/null
+          run --doctor --no-write > doctor.txt 2>&1 || true
+          grep -q "terminal" doctor.txt
+          echo /quit | run --no-write --base-url http://127.0.0.1:1/v1 --model x
       - name: Stage
         run: |
           mkdir -p out
@@ -243,7 +356,6 @@ jobs:
   tui-windows:
     runs-on: windows-latest
     timeout-minutes: 5
-    continue-on-error: true
     needs: windows
     steps:
       - uses: actions/checkout@v4
@@ -256,12 +368,12 @@ jobs:
           python-version: "3.12"
       - name: Install ConPTY driver
         run: python -m pip install pywinpty
-      - name: Test arrows and provider 11
+      - name: Test arrows move the selection, and provider 11
         run: python tests/windows_tui.py
 
   pages:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [test, full-linux, lite-linux, windows, nano, macos, rust9x]
+    needs: [test, test-hosts, test-qemu, check-targets, msrv, full-linux, lite-linux, windows, nano, macos, rust9x, tui-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: read

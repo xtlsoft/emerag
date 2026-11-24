@@ -63,7 +63,14 @@ impl Client {
         } else {
             url.path_and_query()
         };
-        let proxy_auth = proxy.as_ref().and_then(|p| p.auth.as_deref());
+        // Proxy credentials belong only on requests the proxy itself reads
+        // (absolute-form over plain HTTP). Inside a CONNECT tunnel the
+        // request goes to the origin server, which must never see them.
+        let proxy_auth = if absolute_form {
+            proxy.as_ref().and_then(|p| p.auth.as_deref())
+        } else {
+            None
+        };
         let head = build_request_head(&req, &target, absolute_form, &self.user_agent, proxy_auth)?;
         if self.verbose {
             eprintln!("> {} {}{}", req.method, url.origin(), url.path_and_query());
@@ -130,7 +137,13 @@ impl Client {
             if self.cancel.is_cancelled() {
                 return Err(Error::new("cancelled"));
             }
-            let key = format!("{} {}", url.origin(), url.path_and_query());
+            // POST /x -> 303 -> GET /x is Post/Redirect/Get, not a loop.
+            let key = format!(
+                "{} {} {}",
+                method.to_ascii_uppercase(),
+                url.origin(),
+                url.path_and_query()
+            );
             if visited.iter().any(|v| v == &key) {
                 return Err(Error::new(format!("redirect loop detected at {key}")));
             }
@@ -265,9 +278,13 @@ impl Client {
             )));
         }
         if self.dns_first && !self.dns_servers.is_empty() {
-            if let Ok(ips) =
-                crate::dns::resolve(host, port, &self.dns_servers, Duration::from_secs(4))
-            {
+            if let Ok(ips) = crate::dns::resolve_cancellable(
+                host,
+                port,
+                &self.dns_servers,
+                Duration::from_secs(4),
+                Some(&self.cancel),
+            ) {
                 if !ips.is_empty() {
                     return Ok(ips);
                 }
@@ -290,7 +307,13 @@ impl Client {
             Err(e) => last_error = Some(format!("system resolver: {e}")),
         }
         if !self.dns_servers.is_empty() {
-            match crate::dns::resolve(host, port, &self.dns_servers, Duration::from_secs(4)) {
+            match crate::dns::resolve_cancellable(
+                host,
+                port,
+                &self.dns_servers,
+                Duration::from_secs(4),
+                Some(&self.cancel),
+            ) {
                 Ok(ips) if !ips.is_empty() => return Ok(ips),
                 Ok(_) => {
                     last_error = Some(format!(
@@ -399,23 +422,14 @@ impl Request {
 fn connect_tunnel(mut tcp: TcpStream, url: &Url, auth: Option<&str>) -> Result<TcpStream> {
     let authority = url.host_header();
     let mut head = format!(
-        "CONNECT {authority} HTTP/1.1
-Host: {authority}
-Proxy-Connection: keep-alive
-"
+        "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nProxy-Connection: keep-alive\r\n"
     );
     if let Some(auth) = auth {
         head.push_str("Proxy-Authorization: Basic ");
         head.push_str(auth);
-        head.push_str(
-            "
-",
-        );
+        head.push_str("\r\n");
     }
-    head.push_str(
-        "
-",
-    );
+    head.push_str("\r\n");
     tcp.write_all(head.as_bytes())
         .map_err(|e| Error::new(format!("io: {e}")).context("proxy CONNECT"))?;
     tcp.flush()

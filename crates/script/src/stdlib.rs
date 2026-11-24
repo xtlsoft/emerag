@@ -76,7 +76,11 @@ pub(crate) fn install(interp: &mut Interp) {
     }
     interp.set_global("os", Value::Table(os_t));
 
-    for ns in ["io", "fs", "proc", "net", "sys"] {
+    // Every namespace the host implements must be registered, or a script
+    // calling e.g. json.encode only gets "attempt to index a nil value".
+    for ns in [
+        "io", "fs", "proc", "net", "sys", "env", "json", "hash", "time", "sleep", "base64",
+    ] {
         let table = interp.register_host_ns(ns);
         interp.set_global(ns, Value::Table(table));
     }

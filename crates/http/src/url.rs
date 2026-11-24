@@ -174,7 +174,16 @@ impl Url {
         if location.is_empty() {
             return Err(Error::new("empty redirect location"));
         }
-        if location.contains("://") {
+        // Fragments are client-side only and never sent to a server.
+        let location = match location.find('#') {
+            Some(0) => return Ok(self.clone()),
+            Some(i) => &location[..i],
+            None => location,
+        };
+        // Absolute only when "scheme:" comes before any '/', '?' or '#';
+        // "/login?next=https://x/" is a relative reference.
+        let first_delim = location.find(['/', '?']).unwrap_or(location.len());
+        if location[..first_delim].contains(':') && location[first_delim..].starts_with("//") {
             return Url::parse(location);
         }
         if let Some(rest) = location.strip_prefix("//") {
@@ -302,6 +311,23 @@ fn normalize_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn join_relative_with_embedded_url_and_fragment() {
+        let base = Url::parse("https://a.example/x/y").unwrap();
+        let j = base.join("/login?next=https://x/").unwrap();
+        assert_eq!(
+            (j.host.as_str(), j.path.as_str(), j.query.as_str()),
+            ("a.example", "/login", "next=https://x/")
+        );
+        let j = base.join("/a#frag").unwrap();
+        assert_eq!(j.path_and_query(), "/a");
+        let j = base.join("https://b.example/z#f").unwrap();
+        assert_eq!(
+            (j.host.as_str(), j.path_and_query().as_str()),
+            ("b.example", "/z")
+        );
+    }
 
     fn parsed(s: &str) -> Url {
         match Url::parse(s) {

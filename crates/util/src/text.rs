@@ -188,7 +188,18 @@ fn skip_escape(bytes: &[u8], i: usize) -> usize {
             }
             j
         }
-        _ => j + 1,
+        // ESC + one character (Alt+key style). Skip the whole character:
+        // stopping inside a multi-byte UTF-8 sequence made callers slice the
+        // string off a char boundary and panic on model output like "\x1bé".
+        b => {
+            let n = match b {
+                0xc0..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf7 => 4,
+                _ => 1,
+            };
+            (j + n).min(bytes.len())
+        }
     }
 }
 
@@ -401,5 +412,12 @@ mod tests {
     #[test]
     fn sanitize_removes_controls() {
         assert_eq!(sanitize("a\u{0}b\r\nc\td"), "a\u{fffd}b\nc\td");
+    }
+
+    #[test]
+    fn escape_before_multibyte_char_does_not_panic() {
+        assert_eq!(width("\x1b\u{e9}a"), 1);
+        assert_eq!(strip_ansi("x\x1b\u{4e2d}y"), "xy");
+        let _ = wrap("\x1b\u{e9}\u{e9}\u{e9} hello", 4);
     }
 }

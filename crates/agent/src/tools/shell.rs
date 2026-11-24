@@ -304,9 +304,8 @@ pub fn run_with_input(
     if command.trim().is_empty() {
         return Err(AgentError::new("empty command"));
     }
-    let mut cmd = Command::new(&shell.path);
-    cmd.args(shell.kind.argv(command))
-        .current_dir(cwd)
+    let mut cmd = build_command(shell, command);
+    cmd.current_dir(cwd)
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -320,12 +319,6 @@ pub fn run_with_input(
     for (k, v) in env {
         cmd.env(k, v);
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
 
     let started = Instant::now();
     let mut child = cmd.spawn().map_err(|e| {
@@ -338,6 +331,7 @@ pub fn run_with_input(
         }
         AgentError::new(msg)
     })?;
+    let tree = ProcessTree::attach(&child);
 
     if let Some(bytes) = input {
         if let Some(mut si) = child.stdin.take() {
@@ -371,31 +365,30 @@ pub fn run_with_input(
             Ok(Some(_)) => break,
             Ok(None) => {}
             Err(e) => {
-                let _ = child.kill();
+                tree.kill(&mut child);
                 return Err(AgentError::new(format!("waiting for command failed: {e}")));
             }
         }
         if cancel.is_cancelled() {
             cancelled = true;
-            let _ = child.kill();
-            let _ = child.wait();
+            tree.kill(&mut child);
             break;
         }
         if started.elapsed() > timeout {
             timed_out = true;
-            let _ = child.kill();
-            let _ = child.wait();
+            tree.kill(&mut child);
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
     let code = child.try_wait().ok().flatten().and_then(|s| s.code());
-    if let Some(t) = t1 {
-        let _ = t.join();
-    }
-    if let Some(t) = t2 {
-        let _ = t.join();
-    }
+    // A background grandchild ("server &") inherits the pipes and keeps them
+    // open after the shell exits. Wait briefly for the readers, then return
+    // with what was captured instead of blocking until it exits.
+    join_with_deadline(
+        [t1, t2],
+        Duration::from_millis(if timed_out || cancelled { 2000 } else { 500 }),
+    );
     let stdout = String::from_utf8_lossy(&emerag_util::sync::lock(&out_buf)).into_owned();
     let stderr = String::from_utf8_lossy(&emerag_util::sync::lock(&err_buf)).into_owned();
     Ok(CommandResult {
@@ -451,10 +444,152 @@ fn default_env() -> Vec<(String, String)> {
     ]
 }
 
-/// Kill a spawned process tree as best we can without extra crates.
+/// Wait for reader threads until `grace` passes; threads still blocked on a
+/// pipe held open by an orphaned grandchild are left to finish on their own.
+fn join_with_deadline(handles: [Option<std::thread::JoinHandle<()>>; 2], grace: Duration) {
+    let deadline = Instant::now() + grace;
+    let mut handles: Vec<_> = handles.into_iter().flatten().collect();
+    while !handles.is_empty() {
+        let (done, rest): (Vec<_>, Vec<_>) = handles.into_iter().partition(|h| h.is_finished());
+        for h in done {
+            let _ = h.join();
+        }
+        handles = rest;
+        if handles.is_empty() || Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A Command that runs `command` through `shell`, in its own process group
+/// (Unix) so the whole tree can be killed, without a console window
+/// (Windows), and with cmd.exe given the command line verbatim.
+pub fn build_command(shell: &ShellInfo, command: &str) -> Command {
+    let mut cmd = Command::new(&shell.path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        if shell.kind == ShellKind::Cmd {
+            // std quotes arguments for the MSVC runtime, which cmd.exe does not
+            // use: `dir "C:\Program Files"` would arrive with literal \" in
+            // it. With /S, cmd strips exactly one pair of outer quotes.
+            cmd.args(["/D", "/S", "/C"]);
+            cmd.raw_arg(format!("\"{command}\""));
+            return cmd;
+        }
+    }
+    cmd.args(shell.kind.argv(command));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd
+}
+
+/// Handle for killing a child together with everything it started.
+///
+/// Unix: the child leads its own process group (see [build_command]), and
+/// the group is sent SIGKILL. Windows: the child is placed in a Job Object
+/// that is terminated; if that fails (a parent job that forbids nesting on
+/// Windows 7), `taskkill /T /F` is used.
+pub struct ProcessTree {
+    #[cfg(windows)]
+    job: isize,
+}
+
+#[cfg(windows)]
+mod winjob {
+    use core::ffi::c_void;
+    extern "system" {
+        pub fn CreateJobObjectW(attrs: *mut c_void, name: *const u16) -> *mut c_void;
+        pub fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
+        pub fn TerminateJobObject(job: *mut c_void, code: u32) -> i32;
+        pub fn CloseHandle(h: *mut c_void) -> i32;
+    }
+}
+
+impl ProcessTree {
+    pub fn attach(child: &Child) -> ProcessTree {
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            unsafe {
+                let job = winjob::CreateJobObjectW(core::ptr::null_mut(), core::ptr::null());
+                if !job.is_null() {
+                    if winjob::AssignProcessToJobObject(job, child.as_raw_handle() as *mut _) != 0 {
+                        return ProcessTree { job: job as isize };
+                    }
+                    winjob::CloseHandle(job);
+                }
+            }
+            ProcessTree { job: 0 }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = child;
+            ProcessTree {}
+        }
+    }
+
+    /// Kill the child and its descendants, then reap the child.
+    pub fn kill(&self, child: &mut Child) {
+        #[cfg(unix)]
+        {
+            extern "C" {
+                fn kill(pid: i32, sig: i32) -> i32;
+            }
+            const SIGKILL: i32 = 9;
+            let pid = child.id() as i32;
+            if pid > 0 {
+                unsafe {
+                    kill(-pid, SIGKILL);
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            let killed =
+                self.job != 0 && unsafe { winjob::TerminateJobObject(self.job as *mut _, 1) } != 0;
+            if !killed {
+                let _ = Command::new("taskkill")
+                    .args(["/T", "/F", "/PID", &child.id().to_string()])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        if self.job != 0 {
+            unsafe {
+                winjob::CloseHandle(self.job as *mut _);
+            }
+        }
+    }
+}
+
+// The handle is only used to terminate the job; that is safe from any thread.
+unsafe impl Send for ProcessTree {}
+
+/// Kill a spawned process and everything it started. Without a tree handle
+/// from spawn time, Windows falls back to `taskkill /T`.
 pub fn terminate(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
+    #[cfg(windows)]
+    let tree = ProcessTree { job: 0 };
+    #[cfg(not(windows))]
+    let tree = ProcessTree {};
+    tree.kill(child);
 }
 
 #[cfg(test)]
@@ -518,5 +653,47 @@ mod tests {
         )
         .unwrap();
         assert!(c.cancelled);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_grandchildren_and_background_does_not_block() {
+        let shell = detect(Some("sh"));
+        let cwd = std::env::temp_dir();
+        let t = Instant::now();
+        let c = run(
+            &shell,
+            "sleep 6; true",
+            &cwd,
+            Duration::from_millis(300),
+            &[],
+            4096,
+            &CancelToken::new(),
+        )
+        .unwrap();
+        assert!(c.timed_out);
+        assert!(
+            t.elapsed() < Duration::from_secs(4),
+            "took {:?}",
+            t.elapsed()
+        );
+
+        let t = Instant::now();
+        let c = run(
+            &shell,
+            "sleep 6 & echo started",
+            &cwd,
+            Duration::from_secs(10),
+            &[],
+            4096,
+            &CancelToken::new(),
+        )
+        .unwrap();
+        assert_eq!(c.stdout.trim(), "started");
+        assert!(
+            t.elapsed() < Duration::from_secs(4),
+            "took {:?}",
+            t.elapsed()
+        );
     }
 }

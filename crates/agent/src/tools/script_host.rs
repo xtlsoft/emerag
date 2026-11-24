@@ -16,6 +16,29 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub fn run_script(cwd: &Path, source: &str, _ui: &mut dyn Ui, max_output: usize) -> Result<String> {
+    // The parser and table drop are depth-limited, but scripts may also run
+    // on a background-turn thread with a small default stack. Give the engine
+    // its own generous stack; if no thread can be created (RLIMIT_NPROC is
+    // exactly the situation the forkless script tool exists for), run inline.
+    let stack = if cfg!(target_pointer_width = "64") {
+        64 << 20
+    } else {
+        16 << 20
+    };
+    let (cwd_owned, source_owned) = (cwd.to_path_buf(), source.to_string());
+    let spawned = std::thread::Builder::new()
+        .name("emerag-script".into())
+        .stack_size(stack)
+        .spawn(move || run_script_inline(&cwd_owned, &source_owned, max_output));
+    match spawned {
+        Ok(handle) => handle
+            .join()
+            .unwrap_or_else(|_| Err(AgentError::new("script error: the script engine panicked"))),
+        Err(_) => run_script_inline(cwd, source, max_output),
+    }
+}
+
+fn run_script_inline(cwd: &Path, source: &str, max_output: usize) -> Result<String> {
     let mut host = AgentHost {
         cwd: cwd.to_path_buf(),
         output: String::new(),
@@ -113,22 +136,43 @@ fn table_from_json(v: &emerag_json::Value) -> Value {
 }
 
 fn json_from_value(v: &Value) -> emerag_json::Value {
+    let mut path = Vec::new();
+    json_from_value_inner(v, &mut path)
+}
+
+/// `path` holds the tables currently being converted: a table that contains
+/// itself (t.a = t) is emitted as a marker string instead of recursing until
+/// the stack overflows. Nesting deeper than 200 levels is cut the same way.
+fn json_from_value_inner(v: &Value, path: &mut Vec<*const ()>) -> emerag_json::Value {
     match v {
         Value::Nil => emerag_json::Value::Null,
         Value::Bool(b) => emerag_json::Value::Bool(*b),
         Value::Number(n) => emerag_json::Value::Number(emerag_json::Number::Float(*n)),
         Value::Str(s) => emerag_json::Value::String(s.clone()),
         Value::Function(_) => emerag_json::Value::String("[function]".into()),
-        Value::Table(t) => {
-            let t = t.borrow();
+        Value::Table(rc) => {
+            let ptr = std::rc::Rc::as_ptr(rc) as *const ();
+            if path.contains(&ptr) {
+                return emerag_json::Value::String("[cycle]".into());
+            }
+            if path.len() >= 200 {
+                return emerag_json::Value::String("[too deep]".into());
+            }
+            path.push(ptr);
+            let t = rc.borrow();
             let entries = t.iter();
             let is_array = !entries.is_empty()
                 && entries.iter().enumerate().all(|(i, (k, _))| match k {
                     Value::Number(n) => (*n - (i + 1) as f64).abs() < f64::EPSILON,
                     _ => false,
                 });
-            if is_array {
-                emerag_json::Value::Array(entries.iter().map(|(_, v)| json_from_value(v)).collect())
+            let out = if is_array {
+                emerag_json::Value::Array(
+                    entries
+                        .iter()
+                        .map(|(_, v)| json_from_value_inner(v, path))
+                        .collect(),
+                )
             } else {
                 let mut m = emerag_json::Map::new();
                 for (k, v) in entries {
@@ -136,10 +180,12 @@ fn json_from_value(v: &Value) -> emerag_json::Value {
                         Value::Str(s) => s.clone(),
                         other => emerag_script::tostring(other),
                     };
-                    m.insert(key, json_from_value(&v));
+                    m.insert(key, json_from_value_inner(&v, path));
                 }
                 emerag_json::Value::Object(m)
-            }
+            };
+            path.pop();
+            out
         }
     }
 }
@@ -503,8 +549,26 @@ impl emerag_script::Host for AgentHost {
                 Ok(Value::Nil)
             }
             "sys.kill" => {
-                let pid = args.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0) as i32;
-                let sig = signal_number(args.get(1).and_then(|v| v.as_str()).unwrap_or("TERM"));
+                // A positive integer only: pid 0 or -1 (from a missing or
+                // non-numeric argument) would signal our own process group
+                // or every process we may signal.
+                let pid = match args.get(0).and_then(|v| v.as_f64()) {
+                    Some(n) if n >= 1.0 && n <= i32::MAX as f64 && n.fract() == 0.0 => n as i32,
+                    _ => {
+                        return Err(ScriptError::host(
+                            "sys.kill: pid must be a positive integer",
+                            0,
+                        ))
+                    }
+                };
+                let sig = match args.get(1) {
+                    None | Some(Value::Nil) => 15,
+                    Some(Value::Number(n)) if *n >= 0.0 && n.fract() == 0.0 => *n as i32,
+                    Some(Value::Str(name)) => signal_number(name).ok_or_else(|| {
+                        ScriptError::host(format!("sys.kill: unknown signal '{name}'"), 0)
+                    })?,
+                    Some(_) => return Err(ScriptError::host("sys.kill: bad signal argument", 0)),
+                };
                 kill_pid(pid, sig)?;
                 Ok(Value::Nil)
             }
@@ -608,19 +672,56 @@ fn proc_status_id(key: &str) -> u32 {
     0
 }
 
-fn signal_number(name: &str) -> i32 {
-    match name.to_ascii_uppercase().as_str() {
+/// Signal number for a name ("TERM", "SIGTERM") or a numeric string. The
+/// numbers for USR1/USR2/CONT/STOP differ between Linux, the BSDs/macOS and
+/// Linux on MIPS; the portable ones (HUP INT QUIT KILL TERM) do not.
+fn signal_number(name: &str) -> Option<i32> {
+    let upper = name.trim().to_ascii_uppercase();
+    let upper = upper.strip_prefix("SIG").unwrap_or(&upper);
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    const USR1_USR2_CONT_STOP: [i32; 4] = [30, 31, 19, 17];
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        any(target_arch = "mips", target_arch = "mips64")
+    ))]
+    const USR1_USR2_CONT_STOP: [i32; 4] = [16, 17, 25, 23];
+    #[cfg(any(target_os = "solaris", target_os = "illumos"))]
+    const USR1_USR2_CONT_STOP: [i32; 4] = [16, 17, 25, 23];
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+        target_os = "solaris",
+        target_os = "illumos",
+        all(
+            any(target_os = "linux", target_os = "android"),
+            any(target_arch = "mips", target_arch = "mips64")
+        )
+    )))]
+    const USR1_USR2_CONT_STOP: [i32; 4] = [10, 12, 18, 19];
+    let [usr1, usr2, cont, stop] = USR1_USR2_CONT_STOP;
+    Some(match upper {
         "HUP" => 1,
         "INT" => 2,
         "QUIT" => 3,
         "KILL" => 9,
-        "USR1" => 10,
-        "USR2" => 12,
         "TERM" => 15,
-        "CONT" => 18,
-        "STOP" => 19,
-        _ => name.parse::<i32>().unwrap_or(15),
-    }
+        "USR1" => usr1,
+        "USR2" => usr2,
+        "CONT" => cont,
+        "STOP" => stop,
+        _ => return upper.parse::<i32>().ok().filter(|n| *n >= 0),
+    })
 }
 
 #[cfg(unix)]
@@ -686,6 +787,41 @@ fn make_symlink(_target: &Path, link: &Path) -> std::result::Result<(), ScriptEr
 mod tests {
     use super::*;
     use crate::NullUi;
+
+    #[test]
+    fn helper_namespaces_exist_and_json_survives_cycles() {
+        let dir = std::env::temp_dir();
+        let mut ui = NullUi::default();
+        let out = run_script(
+            &dir,
+            "local t = {a = 1} t.self = t \
+             return json.encode({1, 2}) .. '|' .. base64.encode('hi') .. '|' .. \
+             tostring(time.now_ms() > 0) .. '|' .. json.encode(t)",
+            &mut ui,
+            65536,
+        )
+        .unwrap();
+        assert!(out.starts_with("[1,2]|aGk=|true|"), "{out}");
+        assert!(out.contains("[cycle]"), "{out}");
+    }
+
+    #[test]
+    fn kill_requires_a_positive_pid() {
+        let dir = std::env::temp_dir();
+        let mut ui = NullUi::default();
+        for bad in [
+            "sys.kill()",
+            "sys.kill('1234')",
+            "sys.kill(0)",
+            "sys.kill(-1)",
+            "sys.kill(1.5)",
+        ] {
+            let err = run_script(&dir, bad, &mut ui, 4096).unwrap_err();
+            assert!(err.to_string().contains("positive integer"), "{bad}: {err}");
+        }
+        assert_eq!(signal_number("SIGKILL"), Some(9));
+        assert_eq!(signal_number("bogus"), None);
+    }
 
     #[test]
     fn forkless_fd_and_syscalls_work() {

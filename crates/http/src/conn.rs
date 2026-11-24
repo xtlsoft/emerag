@@ -13,17 +13,14 @@ impl Conn {
     /// Adjust the read timeout for the next read (used when grabbing a short
     /// preview of an error body). A zero duration means "block forever".
     pub(crate) fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+        let timeout = if timeout.is_zero() {
+            None
+        } else {
+            Some(timeout)
+        };
         match self {
-            Conn::Plain(s) => {
-                if timeout.is_zero() {
-                    s.set_read_timeout(None)
-                } else {
-                    s.set_read_timeout(Some(timeout))
-                }
-            }
-            // The timeout was installed on the underlying socket before the
-            // handshake; emerag-tls does not expose a setter yet.
-            Conn::Tls(_) => Ok(()),
+            Conn::Plain(s) => s.set_read_timeout(timeout),
+            Conn::Tls(t) => t.set_read_timeout(timeout),
         }
     }
 }

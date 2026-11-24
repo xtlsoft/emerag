@@ -45,9 +45,13 @@ impl TermUi {
         verbose: bool,
         token: emerag_util::sync::CancelToken,
     ) -> Self {
+        // Wrap one column short of the terminal width: a line that fills the
+        // last column followed by CR LF prints an extra blank line on
+        // terminals without deferred wrap (the legacy Windows console, many
+        // serial terminals). An explicit --width is taken as given.
         let width = force_width
             .map(|w| w as usize)
-            .unwrap_or(caps.width as usize)
+            .unwrap_or((caps.width as usize).saturating_sub(1))
             .max(20);
         let color = color && caps.color && !caps.is_dumb();
         let ascii = ascii || !caps.unicode || caps.is_dumb();
@@ -285,10 +289,9 @@ impl TermUi {
 
     /// Interactive yes/no using the terminal prompt when possible.
     fn ask_yes_no(&mut self, prompt: &str, default: bool) -> bool {
-        match emerag_term::prompt::prompt_yes_no_caps(self.caps, prompt, default) {
-            Ok(v) => v,
-            Err(_) => default,
-        }
+        // Cancelled or closed input is a "no", whatever the default is: a
+        // question must not be answered yes because stdin went away.
+        emerag_term::prompt::prompt_yes_no_caps(self.caps, prompt, default).unwrap_or(false)
     }
 }
 

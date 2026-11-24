@@ -25,10 +25,24 @@ pub fn resolve(cwd: &Path, raw: &str) -> PathBuf {
     }
 }
 
+/// Path as shown to the model: relative to cwd when possible, and with '/'
+/// separators on Windows too, so tool output matches the glob patterns the
+/// model writes ("src/*.rs") and paths it copies back still work (Windows
+/// accepts '/').
 pub fn display(cwd: &Path, path: &Path) -> String {
-    match path.strip_prefix(cwd) {
+    let text = match path.strip_prefix(cwd) {
         Ok(rel) if !rel.as_os_str().is_empty() => rel.to_string_lossy().to_string(),
         _ => path.to_string_lossy().to_string(),
+    };
+    slashes(text)
+}
+
+fn slashes(text: String) -> String {
+    // Verbatim paths (\\?\C:\...) disable '/' parsing, so leave them alone.
+    if cfg!(windows) && !text.starts_with("\\\\?\\") {
+        text.replace('\\', "/")
+    } else {
+        text
     }
 }
 
@@ -132,7 +146,21 @@ pub fn edit_file(
         return Err(AgentError::new("old_string must not be empty"));
     }
     let p = resolve(cwd, path);
-    let text = fsutil::read_text(&p, MAX_READ_BYTES)?;
+    // Strict: a lossy read written back would turn every non-UTF-8 byte in
+    // the file into U+FFFD.
+    let text = fsutil::read_text_strict(&p, MAX_READ_BYTES)?;
+    // read_file shows lines without their CR, so on a CRLF file a multi-line
+    // old_string arrives with bare LF. Match it (and write the replacement)
+    // with the file's own line endings.
+    let crlf_old;
+    let crlf_new;
+    let (old, new) = if !text.contains(old) && old.contains('\n') && text.contains("\r\n") {
+        crlf_old = to_crlf(old);
+        crlf_new = to_crlf(new);
+        (crlf_old.as_str(), crlf_new.as_str())
+    } else {
+        (old, new)
+    };
     let count = text.matches(old).count();
     if count == 0 {
         return Err(AgentError::new(format!(
@@ -161,6 +189,10 @@ pub fn edit_file(
         text.len(),
         updated.len()
     ))
+}
+
+fn to_crlf(s: &str) -> String {
+    s.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
 /// Directory tree with bounded depth and entry count.
@@ -303,11 +335,12 @@ pub fn grep(
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let rel = path
-                .strip_prefix(&base)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+            let rel = slashes(
+                path.strip_prefix(&base)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string(),
+            );
             if !emerag_util::glob::matches(inc, &name) && !emerag_util::glob::matches(inc, &rel) {
                 return true;
             }
@@ -393,6 +426,22 @@ mod tests {
         assert!(edit_file(&d, "a", "x", "y", false).is_err());
         edit_file(&d, "a", "x", "y", true).unwrap();
         assert_eq!(std::fs::read_to_string(d.join("a")).unwrap(), "y y");
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn edit_matches_crlf_files_and_refuses_invalid_utf8() {
+        let d = tmp();
+        std::fs::write(d.join("w.txt"), "a\r\nb\r\nc\r\n").unwrap();
+        edit_file(&d, "w.txt", "a\nb", "A\nB", false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("w.txt")).unwrap(),
+            "A\r\nB\r\nc\r\n"
+        );
+
+        std::fs::write(d.join("l1.txt"), b"caf\xe9 ok").unwrap();
+        assert!(edit_file(&d, "l1.txt", "ok", "fine", false).is_err());
+        assert_eq!(std::fs::read(d.join("l1.txt")).unwrap(), b"caf\xe9 ok");
         std::fs::remove_dir_all(d).ok();
     }
 
