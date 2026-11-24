@@ -25,6 +25,20 @@ pub fn read_text(path: &Path, max_bytes: usize) -> Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Read a text file that must be valid UTF-8. Use this before writing the
+/// text back: [read_text] replaces invalid bytes with U+FFFD, and saving that
+/// would silently corrupt a Latin-1 or binary-ish file.
+pub fn read_text_strict(path: &Path, max_bytes: usize) -> Result<String> {
+    let bytes = read_bytes(path, max_bytes)?;
+    String::from_utf8(bytes).map_err(|e| {
+        crate::err!(
+            "{} is not valid UTF-8 (first bad byte at offset {}); editing it as text would corrupt it",
+            path.display(),
+            e.utf8_error().valid_up_to()
+        )
+    })
+}
+
 /// Read raw bytes with a size limit.
 pub fn read_bytes(path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
     let meta =
@@ -39,8 +53,42 @@ pub fn read_bytes(path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
 }
 
 /// Write bytes atomically: write to a sibling temp file then rename.
+///
+/// An existing file keeps its permission bits (and, best effort, its owner);
+/// a symlink is followed so the link stays a link and its target is updated.
+/// A new file gets the usual umask-derived mode.
 pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic_impl(path, bytes, false)
+}
+
+/// Like [write_bytes_atomic], but a newly created file is readable by the
+/// owner only (0600 on Unix) from the first byte: for files holding API
+/// keys or conversations. The temp file is never world-readable.
+pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic_impl(path, bytes, true)
+}
+
+fn write_atomic_impl(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
+    // Follow symlinks: renaming over the link would replace it with a regular
+    // file and leave the real target untouched. A dangling link is replaced.
+    let resolved;
+    let path = match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => match std::fs::canonicalize(path) {
+            Ok(target) => {
+                resolved = target;
+                resolved.as_path()
+            }
+            Err(_) => path,
+        },
+        _ => path,
+    };
+    let existing = std::fs::metadata(path).ok().filter(|m| m.is_file());
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
     if !parent.exists() {
         std::fs::create_dir_all(parent)
             .map_err(|e| crate::err!("cannot create {}: {e}", parent.display()))?;
@@ -52,12 +100,39 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
             .unwrap_or_else(|| "file".into()),
         crate::rand::id(6)
     ));
-    {
-        let mut f = std::fs::File::create(&tmp)
+    #[cfg(not(unix))]
+    let _ = (&existing, private);
+    let written = (|| -> Result<()> {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // Start owner-only whenever the result should not be (or might
+            // not be) world-readable; widen afterwards if the old file was.
+            if private || existing.is_some() {
+                opts.mode(0o600);
+            }
+        }
+        let mut f = opts
+            .open(&tmp)
             .map_err(|e| crate::err!("cannot create {}: {e}", tmp.display()))?;
         f.write_all(bytes)
             .map_err(|e| crate::err!("cannot write {}: {e}", tmp.display()))?;
+        #[cfg(unix)]
+        if let Some(meta) = &existing {
+            use std::os::unix::fs::MetadataExt;
+            // Best effort: keep the owner when running as root.
+            let _ = std::os::unix::fs::fchown(&f, Some(meta.uid()), Some(meta.gid()));
+            f.set_permissions(meta.permissions())
+                .map_err(|e| crate::err!("cannot set permissions on {}: {e}", tmp.display()))?;
+        }
         f.sync_data().ok();
+        Ok(())
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
     match std::fs::rename(&tmp, path) {
         Ok(()) => Ok(()),
@@ -74,6 +149,11 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 
 pub fn write_text_atomic(path: &Path, text: &str) -> Result<()> {
     write_bytes_atomic(path, text.as_bytes())
+}
+
+/// [write_private_atomic] for text.
+pub fn write_text_private_atomic(path: &Path, text: &str) -> Result<()> {
+    write_private_atomic(path, text.as_bytes())
 }
 
 pub fn append_line(path: &Path, line: &str) -> Result<()> {
@@ -170,6 +250,49 @@ mod tests {
         write_text_atomic(&p, "bye").unwrap();
         assert_eq!(read_text(&p, 100).unwrap(), "bye");
         assert!(read_text(&p, 1).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_keeps_mode_and_symlinks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("emerag-fs-test-{}", crate::rand::id(8)));
+        ensure_dir(&dir).unwrap();
+        let p = dir.join("run.sh");
+        write_text_atomic(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_text_atomic(&p, "#!/bin/sh\necho hi\n").unwrap();
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+
+        let link = dir.join("link.sh");
+        std::os::unix::fs::symlink(&p, &link).unwrap();
+        write_text_atomic(&link, "changed\n").unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(read_text(&p, 100).unwrap(), "changed\n");
+
+        let secret = dir.join("config.json");
+        write_text_private_atomic(&secret, "{}").unwrap();
+        assert_eq!(
+            std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn strict_read_rejects_invalid_utf8() {
+        let dir = std::env::temp_dir().join(format!("emerag-fs-test-{}", crate::rand::id(8)));
+        ensure_dir(&dir).unwrap();
+        let p = dir.join("latin1.txt");
+        std::fs::write(&p, b"caf\xe9").unwrap();
+        assert!(read_text_strict(&p, 100).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 

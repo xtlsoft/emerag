@@ -73,9 +73,13 @@ impl PermissionEngine {
         self.deny = rules;
     }
 
+    /// Full, untruncated description of a call, used for deny rules and for
+    /// "allow for this session". It must not be shortened or normalised:
+    /// approving `<170 chars> && make` must not also approve
+    /// `<same 170 chars> && rm -rf ~`, and a multi-line command must not
+    /// collide with the same words on one line.
     pub fn signature(tool: &str, args: &Value) -> String {
-        let detail = short_args(args);
-        format!("{tool} {detail}")
+        format!("{tool} {}", full_args(args))
     }
 
     /// Decide whether a tool call may run. May ask the user.
@@ -110,7 +114,7 @@ impl PermissionEngine {
             prompt: format!("Allow {}?", describe_call(tool, args)),
             kind: QuestionKind::Approval {
                 tool: tool.to_string(),
-                detail: sig.clone(),
+                detail: format!("{tool} {}", short_args(args)),
                 risk,
             },
         };
@@ -136,6 +140,20 @@ fn matches_rule(rule: &str, sig: &str) -> bool {
         tool == sig_tool || tool == "*" && emerag_util::glob::matches(pat, sig)
     } else {
         emerag_util::glob::matches(rule, sig)
+    }
+}
+
+fn full_args(args: &Value) -> String {
+    match args {
+        Value::Object(map) => map
+            .iter()
+            .map(|(k, v)| match v {
+                Value::String(s) => format!("{k}={s}"),
+                _ => format!("{k}={}", emerag_json::to_string(v)),
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => emerag_json::to_string(args),
     }
 }
 
@@ -233,6 +251,39 @@ mod tests {
                 &mut ui
             ) == false
         );
+    }
+
+    struct AlwaysNo;
+    impl Ui for AlwaysNo {
+        fn event(&mut self, _ev: crate::UiEvent<'_>) {}
+        fn ask(&mut self, _q: &Question) -> Answer {
+            Answer::No
+        }
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn session_allow_matches_the_whole_command() {
+        let prefix = "x".repeat(170);
+        let mut p = PermissionEngine::new(Mode::Ask);
+        let good_cmd = format!("{prefix} && make");
+        let evil_cmd = format!("{prefix} && rm -rf ~");
+        p.allow_session(PermissionEngine::signature(
+            "shell",
+            &json!({"command": good_cmd}),
+        ));
+        let evil = json!({"command": evil_cmd});
+        assert!(!p.check("shell", Risk::Write, &evil, &mut AlwaysNo));
+
+        let mut p = PermissionEngine::new(Mode::Ask);
+        p.allow_session(PermissionEngine::signature(
+            "shell",
+            &json!({"command": "echo a rm x"}),
+        ));
+        let multi = json!({"command": "echo a\nrm x"});
+        assert!(!p.check("shell", Risk::Write, &multi, &mut AlwaysNo));
     }
 
     #[test]

@@ -56,24 +56,34 @@ impl Session {
         let mut saved = 0;
         for m in self.messages.iter_mut() {
             if m.role == Role::Tool && m.content.len() > keep_chars {
-                saved += m.content.len() - keep_chars;
                 let head: String = m.content.chars().take(keep_chars).collect();
-                m.content = format!(
-                    "{head}\n[output elided: {} chars removed to save context]",
-                    saved
-                );
+                let removed = m.content.len() - head.len();
+                saved += removed;
+                m.content =
+                    format!("{head}\n[output elided: {removed} bytes removed to save context]");
             }
         }
         saved
     }
 
-    /// Keep only the last n messages (used as a last resort).
+    /// Keep only the last n messages (used as a last resort). The cut moves
+    /// forward past tool results so history never starts with a result whose
+    /// assistant tool call was removed (providers reject that with a 400).
     pub fn hard_trim(&mut self, keep: usize) {
         if self.messages.len() > keep {
-            let start = self.messages.len() - keep;
+            let start = clean_cut(&self.messages, self.messages.len() - keep);
             self.messages.drain(0..start);
         }
     }
+}
+
+/// Move a cut point forward until the kept part does not begin with an
+/// orphaned tool result. May return messages.len() if only results remain.
+pub(crate) fn clean_cut(messages: &[Message], mut at: usize) -> usize {
+    while at < messages.len() && messages[at].role == Role::Tool {
+        at += 1;
+    }
+    at
 }
 
 /// Find the index of the start of the next user turn, so trimming never
@@ -84,8 +94,9 @@ fn next_group_boundary(messages: &[Message]) -> usize {
             return i;
         }
     }
-    // No user message: cut everything except the last two messages.
-    messages.len().saturating_sub(2)
+    // No user message: cut everything except the last two messages, but not
+    // between a tool call and its results.
+    clean_cut(messages, messages.len().saturating_sub(2))
 }
 
 #[cfg(test)]
@@ -125,5 +136,22 @@ mod tests {
         s.hard_trim(5);
         assert_eq!(s.messages.len(), 5);
         assert_eq!(s.messages[4].content, "u19");
+    }
+
+    #[test]
+    fn hard_trim_never_starts_with_a_tool_result() {
+        let mut s = Session::new();
+        s.push(Message::user("q"));
+        s.push(Message::assistant("calling tools"));
+        for i in 0..5 {
+            s.push(Message::tool(format!("c{i}"), "result"));
+        }
+        s.push(Message::assistant("done"));
+        s.hard_trim(4);
+        assert!(s
+            .messages
+            .first()
+            .map(|m| m.role != Role::Tool)
+            .unwrap_or(true));
     }
 }

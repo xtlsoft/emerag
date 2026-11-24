@@ -146,6 +146,11 @@ fn str_rep(interp: &mut Interp, args: Vec<Value>) -> IResult<Vec<Value>> {
     if total > crate::interp::MAX_STRING_BYTES {
         return Err(interp.rt("resulting string too large in 'rep'"));
     }
+    if total == 0 {
+        // string.rep("", 1e15) would otherwise loop 1e15 times without ever
+        // touching the instruction or wall-clock budget.
+        return Ok(vec![Value::Str(String::new())]);
+    }
     let mut out = String::with_capacity(total);
     for i in 0..n {
         if i > 0 {

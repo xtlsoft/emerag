@@ -1305,3 +1305,30 @@ fn gsub_replacement_fallbacks() {
         "aBc"
     );
 }
+
+#[test]
+fn deep_structures_do_not_overflow_the_native_stack() {
+    // Dropping a 100k-deep chain of tables used to recurse once per level.
+    assert_eq!(
+        num("local t = {} for i = 1, 1e5 do t = {t} end return 1"),
+        1.0
+    );
+    // Block and suffix nesting are rejected by the parser instead.
+    let blocks = format!("{}return 1{}", "do ".repeat(20_000), " end".repeat(20_000));
+    assert_eq!(fails(&blocks).kind, ErrorKind::Syntax);
+    let dots = format!("local t = {{}} return t{}", ".a".repeat(20_000));
+    assert_eq!(fails(&dots).kind, ErrorKind::Syntax);
+    let calls = format!(
+        "local f f = function() return f end return f{}",
+        "()".repeat(20_000)
+    );
+    assert_eq!(fails(&calls).kind, ErrorKind::Syntax);
+    // Ordinary nesting still works.
+    assert_eq!(num("local t = {a = {a = {a = 3}}} return t.a.a.a"), 3.0);
+}
+
+#[test]
+fn rep_of_empty_string_returns_immediately() {
+    assert_eq!(text("return string.rep('', 1e15)"), "");
+    assert_eq!(text("return string.rep('', 1e15, '')"), "");
+}

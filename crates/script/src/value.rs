@@ -202,6 +202,41 @@ impl fmt::Debug for Table {
     }
 }
 
+/// Drop nested tables iteratively. `t = {t}` repeated 100k times builds a
+/// chain whose recursive drop would overflow the native stack (and abort the
+/// whole agent) long before the instruction budget runs out.
+impl Drop for Table {
+    fn drop(&mut self) {
+        let mut stack: Vec<Rc<RefCell<Table>>> = Vec::new();
+        take_child_tables(self, &mut stack);
+        while let Some(rc) = stack.pop() {
+            // Only a table we hold the last reference to is torn down here;
+            // otherwise dropping `rc` merely decrements its count.
+            if let Ok(cell) = Rc::try_unwrap(rc) {
+                let mut table = cell.into_inner();
+                take_child_tables(&mut table, &mut stack);
+                // `table` is now shallow and drops without recursing.
+            }
+        }
+    }
+}
+
+fn take_child_tables(t: &mut Table, stack: &mut Vec<Rc<RefCell<Table>>>) {
+    for v in t.arr.drain(..) {
+        if let Value::Table(rc) = v {
+            stack.push(rc);
+        }
+    }
+    for (k, v) in t.map.drain(..) {
+        if let Value::Table(rc) = k {
+            stack.push(rc);
+        }
+        if let Value::Table(rc) = v {
+            stack.push(rc);
+        }
+    }
+}
+
 impl Table {
     pub fn new() -> Table {
         Table {

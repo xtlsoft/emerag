@@ -4,12 +4,12 @@
 //! This is deliberately process-based (not threads in-process) so a crashed
 //! command does not take the agent with it.
 
-use crate::tools::shell::{terminate, ShellInfo};
+use crate::tools::shell::{build_command, ProcessTree, ShellInfo};
 use emerag_util::sync::CancelToken;
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -38,10 +38,22 @@ impl JobStatus {
 
 struct Inner {
     child: Option<Child>,
+    tree: Option<ProcessTree>,
     status: JobStatus,
     lines: VecDeque<String>,
     bytes: usize,
     read_offset: usize,
+}
+
+impl Inner {
+    /// Kill the job's whole process tree.
+    fn terminate(&mut self) {
+        // The group may outlive the shell itself, so kill even after exit.
+        // POSIX does not reuse a PID while it is still a process group ID.
+        if let (Some(child), Some(tree)) = (self.child.as_mut(), self.tree.as_ref()) {
+            tree.kill(child);
+        }
+    }
 }
 
 pub struct Job {
@@ -73,25 +85,20 @@ impl JobManager {
         cwd: &PathBuf,
         timeout: Option<Duration>,
     ) -> crate::error::Result<String> {
-        let mut cmd = Command::new(&shell.path);
-        cmd.args(shell.kind.argv(command))
-            .current_dir(cwd)
+        let mut cmd = build_command(shell, command);
+        cmd.current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
         let mut child = cmd
             .spawn()
             .map_err(|e| crate::error::AgentError::new(format!("cannot start job: {e}")))?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
+        let tree = ProcessTree::attach(&child);
         let inner = Arc::new(Mutex::new(Inner {
             child: Some(child),
+            tree: Some(tree),
             status: JobStatus::Running,
             lines: VecDeque::new(),
             bytes: 0,
@@ -120,9 +127,7 @@ impl JobManager {
                 j.cancel.cancel();
                 let mut inner = emerag_util::sync::lock(&j.inner);
                 if inner.status == JobStatus::Running {
-                    if let Some(child) = inner.child.as_mut() {
-                        terminate(child);
-                    }
+                    inner.terminate();
                     inner.status = JobStatus::Killed;
                 }
             });
@@ -218,9 +223,7 @@ impl JobManager {
             .ok_or_else(|| crate::error::AgentError::new(format!("unknown job '{id}'")))?;
         job.cancel.cancel();
         let mut inner = emerag_util::sync::lock(&job.inner);
-        if let Some(child) = inner.child.as_mut() {
-            terminate(child);
-        }
+        inner.terminate();
         if inner.status == JobStatus::Running {
             inner.status = JobStatus::Killed;
         }
@@ -231,9 +234,7 @@ impl JobManager {
         for job in &self.jobs {
             job.cancel.cancel();
             let mut inner = emerag_util::sync::lock(&job.inner);
-            if let Some(child) = inner.child.as_mut() {
-                terminate(child);
-            }
+            inner.terminate();
             inner.status = JobStatus::Killed;
         }
     }
@@ -261,11 +262,17 @@ fn spawn_reader(
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         let mut partial = String::new();
+        // Bytes of a UTF-8 character split across two reads.
+        let mut carry: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    partial.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    carry.extend_from_slice(&buf[..n]);
+                    let keep = incomplete_utf8_tail(&carry);
+                    let split = carry.len() - keep;
+                    partial.push_str(&String::from_utf8_lossy(&carry[..split]));
+                    carry.drain(..split);
                     while let Some(idx) = partial.find('\n') {
                         let line: String = partial.drain(..=idx).collect();
                         push_line(&inner, tag, line.trim_end_matches(['\r', '\n']));
@@ -279,10 +286,31 @@ fn spawn_reader(
                 Err(_) => break,
             }
         }
+        if !carry.is_empty() {
+            partial.push_str(&String::from_utf8_lossy(&carry));
+        }
         if !partial.is_empty() {
             push_line(&inner, tag, &partial);
         }
     });
+}
+
+/// Length of a trailing, possibly incomplete UTF-8 sequence (0..=3 bytes).
+fn incomplete_utf8_tail(bytes: &[u8]) -> usize {
+    for back in 1..=3.min(bytes.len()) {
+        let b = bytes[bytes.len() - back];
+        if b & 0xc0 == 0x80 {
+            continue; // continuation byte: keep looking for the lead byte
+        }
+        let need = match b {
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            _ => return 0,
+        };
+        return if need > back { back } else { 0 };
+    }
+    0
 }
 
 fn push_line(inner: &Arc<Mutex<Inner>>, tag: &str, line: &str) {

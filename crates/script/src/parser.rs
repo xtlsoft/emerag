@@ -12,6 +12,9 @@ use crate::lexer::{Lexer, Tok, Token};
 
 const MAX_DEPTH: usize = 400;
 const MAX_CHAIN: usize = 2000;
+/// Longest run of `.x`, `[k]`, `:m()` or `()` suffixes on one expression.
+/// Each suffix nests the AST one level, and evaluation and drop recurse.
+const MAX_SUFFIXES: usize = 200;
 
 pub(crate) fn parse(src: &str) -> Result<Rc<Proto>, ScriptError> {
     let tokens = Lexer::new(src).tokenize()?;
@@ -166,7 +169,7 @@ impl Parser {
     fn enter(&mut self) -> Result<(), ScriptError> {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
-            return Err(self.err("expression nesting too deep"));
+            return Err(self.err("nesting too deep"));
         }
         Ok(())
     }
@@ -360,7 +363,17 @@ impl Parser {
         Ok(stmts)
     }
 
+    /// Statements nest through blocks (`do ... end`, `if`, loops, function
+    /// bodies), so they share the expression depth budget: 20,000 nested
+    /// `do` blocks must be a syntax error, not a native stack overflow.
     fn parse_stmt(&mut self) -> Result<Stmt, ScriptError> {
+        self.enter()?;
+        let result = self.parse_stmt_inner();
+        self.leave();
+        result
+    }
+
+    fn parse_stmt_inner(&mut self) -> Result<Stmt, ScriptError> {
         let line = self.line();
         match self.tok().clone() {
             Tok::Local => {
@@ -788,7 +801,17 @@ impl Parser {
         } else {
             return Err(self.err(format!("unexpected symbol near {}", self.tok().describe())));
         };
+        let mut suffixes = 0usize;
         loop {
+            if matches!(
+                self.tok(),
+                Tok::Dot | Tok::LBracket | Tok::Colon | Tok::LParen | Tok::LBrace | Tok::Str(_)
+            ) {
+                suffixes += 1;
+                if suffixes > MAX_SUFFIXES {
+                    return Err(self.err("expression has too many suffixes"));
+                }
+            }
             if self.accept(&Tok::Dot) {
                 let name = self.expect_name()?;
                 let key = Expr::new(ExprKind::Str(name));
